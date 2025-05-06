@@ -5,21 +5,23 @@
 class MSGSolver : public Solver {
 private:
     // Вспомогательная функция для вычисления скалярного произведения
-    double dot(const std::vector<double>& v1, const std::vector<double>& v2) const;
+    double dot(const KokkosVector& v1, const KokkosVector& v2) const;
     
     // Вспомогательная функция для умножения матрицы на вектор A*v
-    std::vector<double> multiply(const std::vector<std::vector<double>>& A, 
-                                const std::vector<double>& v) const;
+    KokkosVector multiply(const KokkosCrsMatrix& A, const KokkosVector& v) const;
     
     // Вычисление нормы вектора
-    double norm(const std::vector<double>& v) const;
+    double norm(const KokkosVector& v) const;
+    
+    // Вычисление максимальной нормы вектора (максимальный модуль элемента)
+    double max_norm(const KokkosVector& v) const;
 
 public:
-    MSGSolver(const std::vector<std::vector<double>>& a, 
-              const std::vector<double>& b, 
+    MSGSolver(const KokkosCrsMatrix& a, 
+              const KokkosVector& b, 
               double eps = 1e-6, 
               int maxIterations = 10000)
         : Solver(a, b, eps, maxIterations, "Метод серединных градиентов") {}
     
-    std::vector<double> solve() override;
+    KokkosVector solve(const KokkosVector& true_solution) override;
 };
