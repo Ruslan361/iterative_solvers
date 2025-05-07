@@ -16,8 +16,8 @@ set(CMAKE_PREFIX_PATH "/usr/lib/qt6")
 # Можно также указать конкретно путь к директории с файлами конфигурации Qt6
 # set(Qt6_DIR "/usr/lib/qt6/lib/cmake/Qt6")
 
-# Находим Qt пакет
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Charts)
+# Находим Qt пакет с дополнительным модулем DataVisualization для 3D графиков
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Charts DataVisualization)
 
 # Добавляем исходные файлы GUI
 set(GUI_SOURCES
@@ -54,6 +54,7 @@ target_link_libraries(dirichlet_gui PRIVATE
     Qt6::Widgets
     Qt6::Gui
     Qt6::Charts
+    Qt6::DataVisualization
     dirichlet_solver
 )
 

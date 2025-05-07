@@ -13,6 +13,8 @@ struct SolverResults {
     std::vector<double> true_solution;    // Истинное решение
     std::vector<double> residual;         // Невязка (Ax - b)
     std::vector<double> error;            // Ошибка (u - x)
+    std::vector<double> x_coords;         // Координаты X точек решения
+    std::vector<double> y_coords;         // Координаты Y точек решения
     double residual_norm;                 // Норма невязки
     double error_norm;                    // Норма ошибки
     int iterations;                       // Число итераций
@@ -84,11 +86,28 @@ private:
     double c_bound;    // Нижняя граница по y
     double d_bound;    // Верхняя граница по y
     
+    // Границы локальной матрицы
+    int local_i_begin, local_i_end;
+    int local_j_begin, local_j_end;
+
     // Параметры для критериев остановки
     double eps_precision;   // Точность по разнице между xn и xn-1
     double eps_residual;    // Точность по норме невязки
     double eps_exact_error; // Точность по сравнению с точным решением
     int max_iterations;     // Максимальное число итераций
+    
+    // Флаги активации критериев останова
+    bool use_precision_stopping;     // Использовать критерий точности
+    bool use_residual_stopping;      // Использовать критерий невязки
+    bool use_error_stopping;         // Использовать критерий ошибки
+    bool use_max_iterations_stopping; // Использовать критерий максимального числа итераций
+    
+    // Флаг запроса на остановку решателя
+    bool stop_requested = false;
+
+    // Колбэки для отслеживания итераций и завершения
+    std::function<void(int, double, double, double)> iteration_callback;
+    std::function<void(const SolverResults&)> completion_callback;
     
     // Система сетки для дискретизации
     std::unique_ptr<GridSystem> grid;
@@ -105,15 +124,9 @@ private:
     KokkosVector computeResidual(const KokkosCrsMatrix& A, const KokkosVector& x, const KokkosVector& b) const;
     std::vector<double> computeError(const KokkosVector& v) const;
     
-    // Колбэки для отслеживания итераций и завершения
-    std::function<void(int, double, double, double)> iteration_callback;
-    std::function<void(const SolverResults&)> completion_callback;
-    
-    // Флаги контроля критериев останова
-    bool use_precision_stopping;
-    bool use_residual_stopping;
-    bool use_error_stopping;
-    bool use_max_iterations_stopping;
+    // Методы решения
+    SolverResults solveWithMSG();
+    void finalizeResults(SolverResults& results);
 
 public:
     // Конструктор
@@ -136,6 +149,7 @@ public:
     
     // Прерывание решения по запросу пользователя
     void requestStop() {
+        stop_requested = true;
         if (solver) {
             solver->requestStop();
         }
@@ -143,7 +157,7 @@ public:
     
     // Получение названия метода
     std::string getMethodName() const {
-        return solver ? solver->getName() : "Неизвестный метод";
+        return solver ? solver->getName() : "МСГ";
     }
     
     // Установка колбэков для отслеживания прогресса
@@ -164,4 +178,7 @@ public:
     std::string generateReport() const;
     bool saveResultsToFile(const std::string& filename) const;
     bool saveMatrixAndRhsToFile(const std::string& filename) const;
+
+    // Метод для получения доступа к GridSystem
+    const GridSystem* getGridSystem() const { return grid.get(); }
 };

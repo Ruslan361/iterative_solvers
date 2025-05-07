@@ -21,6 +21,11 @@
 
 // Подключаем заголовки решателя
 #include "dirichlet_solver.hpp"
+#include "grid_system.h"  // Добавляем заголовок для использования функций calculate_x и calculate_y
+
+// Подключаем модуль 3D-визуализации Qt (для Qt6)
+#include <QtDataVisualization/QtDataVisualization>
+
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -66,6 +71,12 @@ private slots:
     void updateIterationInfo(int iteration, double precision, double residual, double error);
     void handleResults(SolverResults results);
     void onSolverFinished();
+    
+    // Слоты для 3D визуализации
+    void onSolutionSeriesVisibilityChanged(bool visible);
+    void onTrueSolutionSeriesVisibilityChanged(bool visible);
+    void onErrorSeriesVisibilityChanged(bool visible);
+    void onShowHeatmapClicked();
 
 private:
     Ui::MainWindow *ui;
@@ -96,6 +107,10 @@ private:
     
     // Преобразование 1D вектора решения в 2D для визуализации
     std::vector<std::vector<double>> solutionTo2D();
+    // Создание 2D матрицы истинного решения
+    std::vector<std::vector<double>> createTrueSolutionMatrix();
+    // Создание 2D матрицы ошибки (разности решений)
+    std::vector<std::vector<double>> createErrorMatrix();
     
     // Вспомогательные функции
     double y(int j, int m, double c_bound, double d_bound);
@@ -131,4 +146,44 @@ private:
     
     // Метод для очистки потока после завершения
     void cleanupThread();
+    
+    // Методы для 3D визуализации
+    void setup3DVisualization();
+    void update3DSurfaces();
+    QSurfaceDataArray* createSurfaceDataArray(const std::vector<std::vector<double>>& data);
+    void showHeatMap(const std::vector<std::vector<double>>& data);
+    
+    // Создание 3D поверхности из трех векторов (x, y, z)
+    QSurfaceDataArray* createSurfaceFromVectors(const std::vector<double>& x, 
+                                               const std::vector<double>& y,
+                                               const std::vector<double>& z);
+    
+    // Метод для отображения 3D графика из векторов
+    void plotXYZ(const std::vector<double>& x, 
+                 const std::vector<double>& y, 
+                 const std::vector<double>& z,
+                 const QString& title = "3D Plot");
+    
+    // 3D визуализация объекты
+    QWidget* visualization3DTab;
+    Q3DSurface* graph3D;
+    QSurface3DSeries* solutionSeries;
+    QSurface3DSeries* trueSolutionSeries;
+    QSurface3DSeries* errorSeries;
+    QCheckBox* showSolutionCheckBox;
+    QCheckBox* showTrueSolutionCheckBox;
+    QCheckBox* showErrorCheckBox;
+    QPushButton* showHeatMapButton;
+    
+    // Улучшенная функция для создания 3D поверхности из облака точек
+    QSurfaceDataArray* createSurfaceDataArrayFromPoints(
+        const std::vector<double>& x_coords,
+        const std::vector<double>& y_coords,
+        const std::vector<double>& values);
+    
+    // Вспомогательная функция для проверки принадлежности точки Г-образной области
+    bool isInDomain(double x, double y);
+    
+    // Функция для отображения точек в 3D без построения поверхности (для отладки)
+    void showPointsIn3D();
 };

@@ -109,6 +109,10 @@ SolverResults DirichletSolver::solve() {
     // Вычисляем ошибку (разница между точным и численным решением)
     results.error = computeError(solution);
     
+    // Получаем векторы координат из GridSystem напрямую
+    results.x_coords = grid->get_x_coords();
+    results.y_coords = grid->get_y_coords();
+    
     // Добавляем информацию о сходимости
     results.iterations = solver->getIterations();
     results.converged = solver->hasConverged();
@@ -293,6 +297,18 @@ bool ResultsIO::saveResults(const std::string& filename, const SolverResults& re
         file << std::scientific << val << "\n";
     }
     
+    // Сохранение координат X
+    file << "X_COORDS\n";
+    for (const auto& val : results.x_coords) {
+        file << std::scientific << val << "\n";
+    }
+    
+    // Сохранение координат Y
+    file << "Y_COORDS\n";
+    for (const auto& val : results.y_coords) {
+        file << std::scientific << val << "\n";
+    }
+    
     return true;
 }
 
@@ -367,6 +383,22 @@ bool ResultsIO::loadResults(const std::string& filename, SolverResults& results,
     results.error.resize(n * m);
     for (int i = 0; i < n * m; ++i) {
         file >> results.error[i];
+    }
+    
+    // Проверяем наличие координат X в файле
+    if (std::getline(file, line) && std::getline(file, line) && line == "X_COORDS") {
+        results.x_coords.resize(n * m);
+        for (int i = 0; i < n * m; ++i) {
+            file >> results.x_coords[i];
+        }
+    }
+    
+    // Проверяем наличие координат Y в файле
+    if (std::getline(file, line) && std::getline(file, line) && line == "Y_COORDS") {
+        results.y_coords.resize(n * m);
+        for (int i = 0; i < n * m; ++i) {
+            file >> results.y_coords[i];
+        }
     }
     
     return true;
