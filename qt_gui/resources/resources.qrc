@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC>
+    <qresource prefix="/">
+        <!-- Здесь можно добавить иконки, изображения и другие ресурсы -->
+        <!-- Например: <file>icons/app_icon.png</file> -->
+    </qresource>
+</RCC>
