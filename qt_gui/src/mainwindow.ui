@@ -435,6 +435,50 @@
       <widget class="QWidget" name="layoutWidget">
        <layout class="QVBoxLayout" name="chartLayout">
         <item>
+         <layout class="QHBoxLayout" name="sliceControlsLayout">
+          <item>
+           <widget class="QLabel" name="sliceAxisLabel">
+            <property name="text">
+             <string>Ось среза:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="sliceAxisComboBox"/>
+          </item>
+          <item>
+           <widget class="QLabel" name="sliceIndexLabel">
+            <property name="text">
+             <string>Индекс среза:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSpinBox" name="sliceIndexSpinBox"/>
+          </item>
+          <item>
+           <widget class="QLabel" name="sliceInfoLabel">
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer_sliceControls">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+        <item>
          <widget class="QComboBox" name="chartTypeComboBox">
           <item>
            <property name="text">

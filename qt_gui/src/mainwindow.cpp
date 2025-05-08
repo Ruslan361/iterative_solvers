@@ -17,6 +17,8 @@
 #include <map>
 #include <set>       // For std::set to find unique coordinates easily
 #include <cmath>     // For std::abs
+#include <QDebug>       // For qDebug messages in stubs
+#include <limits>       // For std::numeric_limits in stubs
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -81,7 +83,21 @@ MainWindow::MainWindow(QWidget *parent)
     }
     
     ui->setupUi(this);
-    
+
+    // Initialize slice controls
+    sliceAxisLabel = ui->sliceAxisLabel;
+    sliceAxisComboBox = ui->sliceAxisComboBox;
+    sliceIndexLabel = ui->sliceIndexLabel;
+    sliceIndexSpinBox = ui->sliceIndexSpinBox;
+    sliceInfoLabel = ui->sliceInfoLabel;
+
+    sliceAxisComboBox->addItem("Срез по X (фиксированный Y)");
+    sliceAxisComboBox->addItem("Срез по Y (фиксированный X)");
+
+    // Connect slice controls signals to slots
+    connect(sliceAxisComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onSliceAxisChanged);
+    connect(sliceIndexSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::onSliceIndexChanged);
+
     // Инициализация классов визуализации
     heatMapGenerator = std::make_unique<HeatMapGenerator>(this);
     
@@ -101,10 +117,10 @@ MainWindow::MainWindow(QWidget *parent)
                         updateChart(results.solution);
                         break;
                     case 1: // Ошибка
-                        updateChartErrorVsTrue(results.error);
+                        updateChart(results.error);
                         break;
                     case 2: // Невязка
-                        updateChartResidual(results.residual);
+                        updateChart(results.residual);
                         break;
                 }
             });
@@ -445,352 +461,250 @@ void MainWindow::onSolverFinished() {
     worker = nullptr;
 }
 
-void MainWindow::updateChart(const std::vector<double>& solution) {
-    if (solution.empty()) {
+void MainWindow::updateChart(const std::vector<double>& dataValues) {
+    if (!solveSuccessful || dataValues.empty()) {
+        // Clear chart if no data or solution not successful
+        QChart *chart = new QChart();
+        ui->chartView->setChart(chart); // QChartView takes ownership and deletes the previous chart.
+        updateSliceControls(); // Update to show no data
         return;
     }
-    
-    // Создаем серию данных для графика с точным соответствием координат
-    auto *series = new QScatterSeries();
-    series->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-    series->setMarkerSize(7.0);
-    series->setName("Численное решение");
-    
-    // Используем сохраненные координаты точек, если они доступны
-    if (!results.x_coords.empty() && !results.y_coords.empty() && 
-        results.x_coords.size() == solution.size() && results.y_coords.size() == solution.size()) {
-        
-        for (size_t i = 0; i < solution.size(); ++i) {
-            series->append(results.x_coords[i], solution[i]);
-        }
+
+    // Extract unique sorted coordinates for slicing
+    m_unique_x_coords.clear();
+    m_unique_y_coords.clear();
+    if (!results.x_coords.empty() && !results.y_coords.empty()) {
+        std::set<double> unique_x_set(results.x_coords.begin(), results.x_coords.end());
+        m_unique_x_coords.assign(unique_x_set.begin(), unique_x_set.end());
+
+        std::set<double> unique_y_set(results.y_coords.begin(), results.y_coords.end());
+        m_unique_y_coords.assign(unique_y_set.begin(), unique_y_set.end());
     }
-    // Запасной вариант, если координаты не были сохранены
-    else if (solver && solver->getGridSystem()) {
-        const GridSystem* grid = solver->getGridSystem();
-        
-        // Для каждой точки решения получаем ее физические координаты
-        for (size_t i = 0; i < solution.size(); ++i) {
-            GridSystem::NodeCoordinates coords = grid->get_node_coordinates(i);
-            series->append(coords.x, solution[i]);
+    updateSliceControls(); // Update controls based on new data
+
+    // Create series for the selected slice
+    auto *series = new QLineSeries(); // MODIFIED: Plot numerical solution as a line
+    auto *trueSeries = new QLineSeries();
+
+    QString chartTitle = "";
+    QString xAxisTitle = "";
+    QString yAxisTitle = "Значение";
+
+    // Determine which data to plot based on chartTypeComboBox
+    const std::vector<double>* currentData = &results.solution; // Default to solution
+    QString dataTypeString = "Решение";
+    int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
+    if (chartTypeIndex == 1) { // Error
+        currentData = &results.error;
+        dataTypeString = "Ошибка";
+    } else if (chartTypeIndex == 2) { // Residual
+        currentData = &results.residual;
+        dataTypeString = "Невязка";
+    }
+
+    if (currentData->empty()) {
+        ui->chartView->setChart(new QChart()); // Set a new empty chart. QChartView handles the old one.
+        return;
+    }
+
+    series->setName(QString("Численное %1").arg(dataTypeString));
+    trueSeries->setName(QString("Истинное %1").arg(dataTypeString));
+
+    if (m_currentSliceAxis == 0 && !m_unique_x_coords.empty() && m_currentSliceIndex < m_unique_x_coords.size()) { // Slice along Y (fixed X)
+        double fixed_x = m_unique_x_coords[m_currentSliceIndex];
+        chartTitle = QString("%1 при X = %2 (срез по Y)").arg(dataTypeString).arg(fixed_x);
+        xAxisTitle = "Y координата";
+
+        for (size_t i = 0; i < results.x_coords.size(); ++i) {
+            if (std::abs(results.x_coords[i] - fixed_x) < 1e-9) { // Compare doubles with tolerance
+                if (i < currentData->size()) { // Ensure index is valid
+                    series->append(results.y_coords[i], (*currentData)[i]);
+                }
+            }
+        }
+        // True solution for this slice (only if plotting "Решение")
+        if (chartTypeIndex == 0) {
+            for (double y_val : m_unique_y_coords) {
+                trueSeries->append(y_val, u(fixed_x, y_val));
+            }
+        }
+
+    } else if (m_currentSliceAxis == 1 && !m_unique_y_coords.empty() && m_currentSliceIndex < m_unique_y_coords.size()) { // Slice along X (fixed Y)
+        double fixed_y = m_unique_y_coords[m_currentSliceIndex];
+        chartTitle = QString("%1 при Y = %2 (срез по X)").arg(dataTypeString).arg(fixed_y);
+        xAxisTitle = "X координата";
+
+        for (size_t i = 0; i < results.y_coords.size(); ++i) {
+            if (std::abs(results.y_coords[i] - fixed_y) < 1e-9) { // Compare doubles with tolerance
+                 if (i < currentData->size()) { // Ensure index is valid
+                    series->append(results.x_coords[i], (*currentData)[i]);
+                }
+            }
+        }
+        // True solution for this slice (only if plotting "Решение")
+        if (chartTypeIndex == 0) {
+            for (double x_val : m_unique_x_coords) {
+                trueSeries->append(x_val, u(x_val, fixed_y));
+            }
         }
     } else {
-        // Если совсем нет доступа к координатам, используем индексы
-        for (size_t i = 0; i < solution.size(); ++i) {
-            series->append(i, solution[i]);
-        }
+        // Fallback or no data for slicing
+        chartTitle = QString("Нет данных для среза (%1)").arg(dataTypeString);
     }
     
     auto *chart = new QChart();
+
     chart->addSeries(series);
-    
-    // Добавляем серию для отображения точного решения, если оно доступно
-    if (!results.x_coords.empty()) {
-        auto* trueSeries = new QLineSeries();
-        trueSeries->setName("Истинное решение");
-        
-        // Создаем гладкую кривую истинного решения для сравнения
-        const double a = params.a_bound;
-        const double b = params.b_bound;
-        const int numPoints = 200; // Для гладкой кривой
-        
-        for (int i = 0; i < numPoints; ++i) {
-            double xCoord = a + i * (b - a) / (numPoints - 1);
-            double yCoord = u(xCoord, (params.c_bound + params.d_bound) / 2.0); // Берем среднюю точку по Y
-            trueSeries->append(xCoord, yCoord);
-        }
-        
-        chart->addSeries(trueSeries);
+    bool trueSeriesAdded = false;
+    if (chartTypeIndex == 0 && trueSeries->points().size() > 0) { // Only show true solution for the "Solution" chart type and if it has points
+       chart->addSeries(trueSeries);
+       trueSeriesAdded = true;
     }
-    
-    // Настраиваем оси
+
     auto *axisX = new QValueAxis();
-    axisX->setTitleText("X координата");
-    axisX->setRange(params.a_bound, params.b_bound);
+    axisX->setTitleText(xAxisTitle);
+    if (m_currentSliceAxis == 0 && !m_unique_y_coords.empty()) axisX->setRange(params.c_bound, params.d_bound);
+    else if (m_currentSliceAxis == 1 && !m_unique_x_coords.empty()) axisX->setRange(params.a_bound, params.b_bound);
     axisX->setLabelFormat("%.2f");
     chart->addAxis(axisX, Qt::AlignBottom);
-    
-    auto *axisY = new QValueAxis();
-    axisY->setTitleText("Значение решения");
-    axisY->setLabelFormat("%.2f");
-    chart->addAxis(axisY, Qt::AlignLeft);
-    
-    // Привязываем серии к осям
     series->attachAxis(axisX);
-    series->attachAxis(axisY);
-    
-    if (chart->series().size() > 1) {
-        chart->series()[1]->attachAxis(axisX);
-        chart->series()[1]->attachAxis(axisY);
+    if (trueSeriesAdded) trueSeries->attachAxis(axisX);
+
+    auto *axisY = new QValueAxis();
+    axisY->setTitleText(yAxisTitle);
+    axisY->setLabelFormat("%.2e"); // Use scientific notation for Y-axis
+
+    // MODIFIED: Calculate and set Y-axis range
+    double minVal = std::numeric_limits<double>::max();
+    double maxVal = std::numeric_limits<double>::lowest();
+    bool dataFoundForRange = false;
+
+    if (series->points().size() > 0) {
+        dataFoundForRange = true;
+        for (const QPointF &p : series->points()) {
+            if (p.y() < minVal) minVal = p.y();
+            if (p.y() > maxVal) maxVal = p.y();
+        }
     }
-    
-    chart->setTitle("Численное и точное решения задачи Дирихле");
+
+    if (trueSeriesAdded && trueSeries->points().size() > 0) {
+        dataFoundForRange = true; // Mark data found if true series contributes
+        for (const QPointF &p : trueSeries->points()) {
+            if (p.y() < minVal) minVal = p.y();
+            if (p.y() > maxVal) maxVal = p.y();
+        }
+    }
+
+    if (dataFoundForRange) {
+        if (minVal == maxVal) { // Handle case with single point or all points having same Y value
+            minVal -= 0.5; // Add some padding
+            maxVal += 0.5;
+        }
+        // Ensure minVal is not greater than maxVal after adjustment, can happen if original was 0 and became -0.5, 0.5
+        if (minVal > maxVal) std::swap(minVal, maxVal);
+
+        double rangeValue = maxVal - minVal;
+        double padding = rangeValue * 0.05; // 5% padding
+
+        // Ensure padding is not zero if range is extremely small but non-zero, or if range became 1.0
+        if (padding == 0.0 && rangeValue == 0.0) { // This case means minVal and maxVal were identical
+             // minVal and maxVal already adjusted by +/- 0.5, so rangeValue is 1.0
+             // padding will be 1.0 * 0.05 = 0.05, this condition might not be strictly needed with current logic
+             // but as a safeguard:
+            padding = 0.05; // Default padding if it ended up zero
+        } else if (padding == 0.0 && rangeValue > 0.0) { // Range is positive but so small padding is zero
+            padding = rangeValue * 0.05 + 1e-9; // Add a tiny bit if it's zero due to precision
+        }
+
+
+        axisY->setRange(minVal - padding, maxVal + padding);
+    }
+    // If no dataFoundForRange, Qt Charts will auto-scale Y-axis, or it will be a default (e.g. 0-1)
+
+    chart->addAxis(axisY, Qt::AlignLeft);
+    series->attachAxis(axisY);
+    if (trueSeriesAdded) trueSeries->attachAxis(axisY);
+
+    chart->setTitle(chartTitle);
     chart->legend()->setVisible(true);
-    
-    ui->chartView->setChart(chart);
+
+    ui->chartView->setChart(chart); // QChartView takes ownership and deletes the previous chart.
     ui->chartView->setRenderHint(QPainter::Antialiasing);
 }
 
 void MainWindow::updateChartErrorVsTrue(const std::vector<double>& error) {
-    if (error.empty()) {
-        return;
+    // This method will now be handled by updateChart by selecting "Ошибка" in chartTypeComboBox
+    // For now, we can call updateChart directly if the chartType is Error
+    if (ui->chartTypeComboBox->currentIndex() == 1) {
+        updateChart(results.error); // or simply results.error if called from handleResults
     }
-    
-    auto *series = new QScatterSeries();
-    series->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-    series->setMarkerSize(5.0);
-    series->setName("Ошибка");
-    
-    // Используем сохраненные координаты точек, если они доступны
-    if (!results.x_coords.empty() && !results.y_coords.empty() && 
-        results.x_coords.size() == error.size() && results.y_coords.size() == error.size()) {
-        
-        for (size_t i = 0; i < error.size(); ++i) {
-            series->append(results.x_coords[i], std::abs(error[i]));
-        }
-    } else {
-        // Если нет координат, отображаем по индексам
-        for (size_t i = 0; i < error.size(); ++i) {
-            series->append(i, std::abs(error[i]));
-        }
-    }
-    
-    auto *chart = new QChart();
-    chart->addSeries(series);
-    
-    // Настраиваем оси
-    auto *axisX = new QValueAxis();
-    if (!results.x_coords.empty()) {
-        axisX->setTitleText("X координата");
-        axisX->setRange(params.a_bound, params.b_bound);
-        axisX->setLabelFormat("%.2f");
-    } else {
-        axisX->setTitleText("Индекс узла");
-        axisX->setLabelFormat("%i");
-    }
-    chart->addAxis(axisX, Qt::AlignBottom);
-    series->attachAxis(axisX);
-    
-    auto *axisY = new QValueAxis();
-    axisY->setTitleText("Модуль ошибки");
-    axisY->setLabelFormat("%.2e");
-    chart->addAxis(axisY, Qt::AlignLeft);
-    series->attachAxis(axisY);
-    
-    chart->setTitle("Ошибка относительно истинного решения");
-    
-    ui->chartView->setChart(chart);
-    ui->chartView->setRenderHint(QPainter::Antialiasing);
 }
 
 void MainWindow::updateChartResidual(const std::vector<double>& residual) {
-    if (residual.empty()) {
-        return;
+    // This method will now be handled by updateChart by selecting "Невязка" in chartTypeComboBox
+    // For now, we can call updateChart directly if the chartType is Residual
+    if (ui->chartTypeComboBox->currentIndex() == 2) {
+        updateChart(results.residual); // or simply results.residual if called from handleResults
     }
-    
-    auto *series = new QScatterSeries();
-    series->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-    series->setMarkerSize(5.0);
-    series->setName("Невязка");
-    
-    // Используем сохраненные координаты точек, если они доступны
-    if (!results.x_coords.empty() && !results.y_coords.empty() && 
-        results.x_coords.size() == residual.size() && results.y_coords.size() == residual.size()) {
-        
-        for (size_t i = 0; i < residual.size(); ++i) {
-            series->append(results.x_coords[i], std::abs(residual[i]));
-        }
-    } else {
-        // Если нет координат, отображаем по индексам
-        for (size_t i = 0; i < residual.size(); ++i) {
-            series->append(i, std::abs(residual[i]));
-        }
-    }
-    
-    auto *chart = new QChart();
-    chart->addSeries(series);
-    
-    // Настраиваем оси
-    auto *axisX = new QValueAxis();
-    if (!results.x_coords.empty()) {
-        axisX->setTitleText("X координата");
-        axisX->setRange(params.a_bound, params.b_bound);
-        axisX->setLabelFormat("%.2f");
-    } else {
-        axisX->setTitleText("Индекс узла");
-        axisX->setLabelFormat("%i");
-    }
-    chart->addAxis(axisX, Qt::AlignBottom);
-    series->attachAxis(axisX);
-    
-    auto *axisY = new QValueAxis();
-    axisY->setTitleText("Модуль невязки");
-    axisY->setLabelFormat("%.2e");
-    chart->addAxis(axisY, Qt::AlignLeft);
-    series->attachAxis(axisY);
-    
-    chart->setTitle("Невязка решения");
-    
-    ui->chartView->setChart(chart);
-    ui->chartView->setRenderHint(QPainter::Antialiasing);
 }
 
-std::vector<std::vector<double>> MainWindow::solutionTo2D() {
-    if (results.solution.empty()) {
-        return {};
+void MainWindow::onSliceAxisChanged(int index) {
+    m_currentSliceAxis = index;
+    m_currentSliceIndex = 0; // Reset slice index when axis changes
+    updateSliceControls();
+    // Trigger chart update based on the currently selected data type in chartTypeComboBox
+    int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
+    if (chartTypeIndex == 0) {
+        updateChart(results.solution);
+    } else if (chartTypeIndex == 1) {
+        updateChart(results.error);
+    } else if (chartTypeIndex == 2) {
+        updateChart(results.residual);
     }
-    
-    // Создаем 2D-матрицу для визуализации
-    std::vector<std::vector<double>> matrix(params.m_internal, std::vector<double>(params.n_internal));
-    
-    // Заполняем матрицу из одномерного вектора результата
-    // Предполагаем, что нумерация в векторе идет по строкам
-    for (int i = 0; i < params.m_internal; ++i) {
-        for (int j = 0; j < params.n_internal; ++j) {
-            size_t idx = i * params.n_internal + j;
-            if (idx < results.solution.size()) {
-                matrix[i][j] = results.solution[idx];
-            }
-        }
+}
+
+void MainWindow::onSliceIndexChanged(int value) {
+    m_currentSliceIndex = value;
+    updateSliceControls(); // Update info label
+    // Trigger chart update based on the currently selected data type in chartTypeComboBox
+    int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
+    if (chartTypeIndex == 0) {
+        updateChart(results.solution);
+    } else if (chartTypeIndex == 1) {
+        updateChart(results.error);
+    } else if (chartTypeIndex == 2) {
+        updateChart(results.residual);
     }
-    
-    return matrix;
 }
 
-double MainWindow::y(int j, int m, double c_bound, double d_bound) {
-    double k = (d_bound - c_bound) / (m + 1);
-    return c_bound + j * k;
-}
-
-double MainWindow::x(int i, int n, double a_bound, double b_bound) {
-    double h = (b_bound - a_bound) / (n + 1);
-    return a_bound + i * h;
-}
-
-double MainWindow::u(double x_val, double y_val) {
-    return exp(pow(x_val, 2) - pow(y_val, 2)); // Пример аналитического решения
-}
-
-void MainWindow::onSaveResultsButtonClicked() {
+void MainWindow::updateSliceControls() {
     if (!solveSuccessful) {
-        QMessageBox::warning(this, "Предупреждение", "Нет результатов для сохранения.");
+        sliceIndexSpinBox->setEnabled(false);
+        sliceAxisComboBox->setEnabled(false);
+        sliceInfoLabel->setText("Нет данных для среза");
+        sliceIndexSpinBox->setRange(0, 0);
         return;
     }
-    
-    QString filename = QFileDialog::getSaveFileName(this, 
-                                                "Сохранить результаты", 
-                                                "", 
-                                                "Текстовые файлы (*.txt)");
-    if (filename.isEmpty())
-        return;
-        
-    try {
-        bool success = solver->saveResultsToFile(filename.toStdString());
-        if (success) {
-            QMessageBox::information(this, "Успех", "Результаты успешно сохранены в файл.");
-        } else {
-            QMessageBox::warning(this, "Предупреждение", "Не удалось сохранить результаты.");
-        }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, "Ошибка", 
-                           QString("Ошибка при сохранении результатов: %1").arg(e.what()));
-    }
-}
 
-void MainWindow::onSaveMatrixButtonClicked() {
-    QString filename = QFileDialog::getSaveFileName(this, 
-                                                "Сохранить матрицу и вектор правой части", 
-                                                "", 
-                                                "Текстовые файлы (*.txt)");
-    if (filename.isEmpty())
-        return;
-        
-    try {
-        bool success = solver->saveMatrixAndRhsToFile(filename.toStdString());
-        if (success) {
-            QMessageBox::information(this, "Успех", "Матрица и вектор правой части успешно сохранены в файл.");
-        } else {
-            QMessageBox::warning(this, "Предупреждение", "Не удалось сохранить матрицу и вектор правой части.");
-        }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, "Ошибка", 
-                           QString("Ошибка при сохранении матрицы: %1").arg(e.what()));
-    }
-}
+    sliceIndexSpinBox->setEnabled(true);
+    sliceAxisComboBox->setEnabled(true);
 
-void MainWindow::onSaveVisualizationButtonClicked() {
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Предупреждение", "Нет результатов для визуализации.");
-        return;
-    }
-    
-    QString filename = QFileDialog::getSaveFileName(this, 
-                                                "Сохранить данные для 3D визуализации", 
-                                                "", 
-                                                "Файлы данных (*.dat)");
-    if (filename.isEmpty())
-        return;
-        
-    try {
-        auto matrix = solutionTo2D();
-        bool success = ResultsIO::saveSolutionFor3D(filename.toStdString(), matrix,
-                                               params.a_bound, params.b_bound,
-                                               params.c_bound, params.d_bound);
-        if (success) {
-            QMessageBox::information(this, "Успех", 
-                "Данные для 3D визуализации успешно сохранены в файл.\n"
-                "Вы можете использовать gnuplot для отображения 3D поверхности:\n"
-                "gnuplot -e \"splot '" + filename + "' with pm3d\"");
+    if (m_currentSliceAxis == 0) { // Slice along Y (fixed X)
+        sliceIndexSpinBox->setRange(0, m_unique_x_coords.empty() ? 0 : m_unique_x_coords.size() - 1);
+        if (!m_unique_x_coords.empty() && m_currentSliceIndex < m_unique_x_coords.size()) {
+            sliceInfoLabel->setText(QString("X = %1").arg(m_unique_x_coords[m_currentSliceIndex]));
         } else {
-            QMessageBox::warning(this, "Предупреждение", "Не удалось сохранить данные для визуализации.");
+            sliceInfoLabel->setText("X: нет данных");
         }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, "Ошибка", 
-                           QString("Ошибка при сохранении данных: %1").arg(e.what()));
+    } else { // Slice along X (fixed Y)
+        sliceIndexSpinBox->setRange(0, m_unique_y_coords.empty() ? 0 : m_unique_y_coords.size() - 1);
+        if (!m_unique_y_coords.empty() && m_currentSliceIndex < m_unique_y_coords.size()) {
+            sliceInfoLabel->setText(QString("Y = %1").arg(m_unique_y_coords[m_currentSliceIndex]));
+        } else {
+            sliceInfoLabel->setText("Y: нет данных");
+        }
     }
-}
-
-void MainWindow::onShowReportButtonClicked() {
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Предупреждение", "Нет результатов для отчета.");
-        return;
-    }
-    
-    try {
-        // Формируем отчет согласно шаблону
-        std::stringstream report;
-        report << "Для решения тестовой задачи использовалась сетка-основа с числом разбиений по x n = " 
-              << params.n_internal << " и числом разбиений по y m = " << params.m_internal << "\n";
-        
-        report << "Метод " << (solver ? solver->getMethodName() : "неизвестен") << "\n";
-        
-        report << "Область [" << params.a_bound << ", " << params.b_bound << "] x [" 
-              << params.c_bound << ", " << params.d_bound << "]\n";
-        
-        // Критерии останова
-        report << "Критерии останова:\n";
-        if (params.use_precision)
-            report << "- Точность: " << params.eps_precision << "\n";
-        if (params.use_residual)
-            report << "- Невязка: " << params.eps_residual << "\n";
-        if (params.use_exact_error)
-            report << "- Ошибка: " << params.eps_exact_error << "\n";
-        if (params.use_max_iterations)
-            report << "- Макс. итераций: " << params.max_iterations << "\n";
-        
-        report << "\nНа решение СЛАУ затрачено итераций N = " << results.iterations
-              << ", достигнута точность epsilon = " << std::scientific << results.error_norm 
-              << " - норма разницы между истинным решением и численным.\n";
-        
-        report << "Схема СЛАУ решена с невязкой норма ||R^N|| = " << std::scientific << results.residual_norm << "\n";
-        report << "Для невязки СЛАУ использована норма max";
-        
-        // Отображаем отчет
-        ui->reportTextEdit->setText(QString::fromStdString(report.str()));
-        ui->tabWidget->setCurrentIndex(2); // Переходим на вкладку с отчетом
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, "Ошибка", 
-                           QString("Ошибка при генерации отчета: %1").arg(e.what()));
-    }
+    sliceIndexSpinBox->setValue(m_currentSliceIndex); // Ensure spinbox reflects current index
 }
 
 // Метод для настройки 3D визуализации
@@ -810,6 +724,9 @@ void MainWindow::setup3DVisualization() {
     graph3D->axisX()->setTitle("X");
     graph3D->axisY()->setTitle("Значение");
     graph3D->axisZ()->setTitle("Y");
+    graph3D->axisX()->setTitleVisible(true);
+    graph3D->axisY()->setTitleVisible(true);
+    graph3D->axisZ()->setTitleVisible(true);
     graph3D->axisX()->setRange(params.a_bound, params.b_bound);
     graph3D->axisZ()->setRange(params.c_bound, params.d_bound);
     
@@ -1186,4 +1103,94 @@ void MainWindow::setErrorSurfaceVisible(bool visible) {
     if (gshapeRegion) {
         gshapeRegion->setErrorSurfaceVisible(visible);
     }
+}
+
+// Stub implementations for missing functions
+
+void MainWindow::onSaveResultsButtonClicked() {
+    qDebug() << "onSaveResultsButtonClicked called - not implemented yet.";
+    // TODO: Implement saving results functionality
+    QMessageBox::information(this, "Not Implemented", "Saving results is not yet implemented.");
+}
+
+void MainWindow::onSaveMatrixButtonClicked() {
+    qDebug() << "onSaveMatrixButtonClicked called - not implemented yet.";
+    // TODO: Implement saving matrix functionality
+    QMessageBox::information(this, "Not Implemented", "Saving matrix is not yet implemented.");
+}
+
+void MainWindow::onSaveVisualizationButtonClicked() {
+    qDebug() << "onSaveVisualizationButtonClicked called - not implemented yet.";
+    // TODO: Implement saving visualization functionality
+    QMessageBox::information(this, "Not Implemented", "Saving visualization is not yet implemented.");
+}
+
+void MainWindow::onShowReportButtonClicked() {
+    qDebug() << "onShowReportButtonClicked called - not implemented yet.";
+    // TODO: Implement showing report functionality
+    QMessageBox::information(this, "Not Implemented", "Showing report is not yet implemented.");
+}
+
+double MainWindow::u(double x_val, double y_val) {
+    // qDebug() << "u(double, double) called - using placeholder. x:" << x_val << "y:" << y_val;
+    // Placeholder for the true solution function u(x, y).
+    // Replace with the actual formula for the true solution.
+    // Example: return std::sin(M_PI * x_val) * std::cos(M_PI * y_val);
+    return x_val * x_val + y_val * y_val; // A simple placeholder, e.g. x^2 + y^2
+}
+
+double MainWindow::x(int i, int n, double a_bound, double b_bound) {
+    // qDebug() << "x(int, int, double, double) called - using placeholder. i:" << i << "n:" << n;
+    // Calculates the x-coordinate of the i-th grid line (0-indexed internal node).
+    // n is the number of internal divisions along x-axis (n_internal from params).
+    // Grid has n+1 intervals, n internal nodes.
+    if (n <= 0) return a_bound; // Should not happen with valid params.n_internal
+    double hx = (b_bound - a_bound) / (static_cast<double>(n) + 1.0); // Step size
+    return a_bound + static_cast<double>(i) * hx; // i is 1-indexed in some contexts, ensure consistency
+                                                  // Assuming i here is 0 to n-1 for internal points
+                                                  // Or 0 to n+1 for all points including boundary
+                                                  // The call in createTrueSolutionMatrix uses i+1, so i is 0 to n_internal-1
+}
+
+double MainWindow::y(int j, int m, double c_bound, double d_bound) {
+    // qDebug() << "y(int, int, double, double) called - using placeholder. j:" << j << "m:" << m;
+    // Calculates the y-coordinate of the j-th grid line (0-indexed internal node).
+    // m is the number of internal divisions along y-axis (m_internal from params).
+    if (m <= 0) return c_bound; // Should not happen with valid params.m_internal
+    double hy = (d_bound - c_bound) / (static_cast<double>(m) + 1.0); // Step size
+    return c_bound + static_cast<double>(j) * hy; // Similar to x, j is 0 to m_internal-1 from createTrueSolutionMatrix context (j+1)
+}
+
+std::vector<std::vector<double>> MainWindow::solutionTo2D() {
+    qDebug() << "solutionTo2D() called.";
+    std::vector<std::vector<double>> matrix;
+
+    if (params.n_internal <= 0 || params.m_internal <= 0) {
+        qDebug() << "solutionTo2D: Invalid dimensions (n_internal or m_internal <= 0).";
+        return matrix; // Return empty matrix
+    }
+
+    matrix.resize(params.m_internal, std::vector<double>(params.n_internal));
+
+    if (solveSuccessful && !results.solution.empty()) {
+        if (results.solution.size() == static_cast<size_t>(params.n_internal * params.m_internal)) {
+            for (int r = 0; r < params.m_internal; ++r) {
+                for (int c = 0; c < params.n_internal; ++c) {
+                    matrix[r][c] = results.solution[r * params.n_internal + c];
+                }
+            }
+            qDebug() << "solutionTo2D: Successfully reshaped results.solution.";
+        } else {
+            qDebug() << "solutionTo2D: Size mismatch between results.solution and n_internal*m_internal. Filling with NaN.";
+            for (int r = 0; r < params.m_internal; ++r) {
+                std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
+            }
+        }
+    } else {
+        qDebug() << "solutionTo2D: No solution available or solution is empty. Filling with NaN.";
+        for (int r = 0; r < params.m_internal; ++r) {
+            std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
+        }
+    }
+    return matrix;
 }

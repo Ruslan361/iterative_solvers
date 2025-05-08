@@ -58,7 +58,8 @@ private:
     std::unique_ptr<DirichletSolver> solver;
 };
 
-class MainWindow : public QMainWindow {
+class MainWindow : public QMainWindow
+{
     Q_OBJECT
 
 public:
@@ -73,10 +74,10 @@ public:
         const std::vector<double>& numericalSolution,
         const std::vector<double>& trueSolution,
         const std::vector<double>& errorValues,
-        const std::vector<double>& xCoords, 
+        const std::vector<double>& xCoords,
         const std::vector<double>& yCoords,
-        int decimationFactor = 1,
-        int connectorRows = 5
+        int decimationFactor,
+        int connectorRows
     );
     
 public slots:
@@ -88,19 +89,22 @@ public slots:
 private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
+    void handleResults(SolverResults results);
+    void updateIterationInfo(int iteration, double precision, double residual, double error);
+    void onSolverFinished();
     void onSaveResultsButtonClicked();
     void onSaveMatrixButtonClicked();
     void onSaveVisualizationButtonClicked();
     void onShowReportButtonClicked();
-    void updateIterationInfo(int iteration, double precision, double residual, double error);
-    void handleResults(SolverResults results);
-    void onSolverFinished();
-    
-    // Слоты для 3D визуализации
+    void onShowHeatmapClicked();
     void onSolutionSeriesVisibilityChanged(bool visible);
     void onTrueSolutionSeriesVisibilityChanged(bool visible);
     void onErrorSeriesVisibilityChanged(bool visible);
-    void onShowHeatmapClicked();
+
+    // Slots for 2D chart slicing
+    void onSliceAxisChanged(int index);
+    void onSliceIndexChanged(int value);
+
 
 private:
     Ui::MainWindow *ui;
@@ -187,10 +191,27 @@ private:
     // Класс для генерации тепловых карт
     std::unique_ptr<HeatMapGenerator> heatMapGenerator;
     
-    QCheckBox* showSolutionCheckBox;
-    QCheckBox* showTrueSolutionCheckBox;
-    QCheckBox* showErrorCheckBox;
-    QPushButton* showHeatMapButton;
-    QPushButton* decimationFactorButton;
-    QSpinBox* decimationFactorSpinBox;
+    QCheckBox *showSolutionCheckBox;
+    QCheckBox *showTrueSolutionCheckBox;
+    QCheckBox *showErrorCheckBox;
+    QPushButton *showHeatMapButton; // Moved declaration here
+    QSpinBox *decimationFactorSpinBox; // Moved declaration here
+    QPushButton *decimationFactorButton; // Moved declaration here
+
+
+    // UI elements for 2D chart slicing
+    QLabel *sliceAxisLabel;
+    QComboBox *sliceAxisComboBox;
+    QLabel *sliceIndexLabel;
+    QSpinBox *sliceIndexSpinBox;
+    QLabel *sliceInfoLabel;
+
+
+    // Helper members for 2D chart slicing
+    std::vector<double> m_unique_x_coords;
+    std::vector<double> m_unique_y_coords;
+    int m_currentSliceAxis = 0; // 0 for Y-slice (fixed X), 1 for X-slice (fixed Y)
+    int m_currentSliceIndex = 0;
+
+    void updateSliceControls(); // Helper to update spinbox range and info label
 };
