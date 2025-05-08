@@ -1516,37 +1516,7 @@ void MainWindow::createGShapedSurface() {
             }
         }
         
-        // Если не нашли точное соответствие, находим ближайшие соседние точки и интерполируем
-        if (!found_bottom && !smallRectPoints[max_y_small].empty()) {
-            // Сортируем точки по X-координате
-            std::vector<std::pair<double, double>> sortedPoints = smallRectPoints[max_y_small];
-            std::sort(sortedPoints.begin(), sortedPoints.end(),
-                     [](const auto& a, const auto& b) { return a.first < b.first; });
-            
-            // Находим ближайшую левую и правую точки
-            auto it = std::lower_bound(sortedPoints.begin(), sortedPoints.end(), std::make_pair(x, 0.0),
-                                     [](const auto& a, const auto& b) { return a.first < b.first; });
-            
-            if (it == sortedPoints.begin()) {
-                val_bottom = sortedPoints.front().second;
-                found_bottom = true;
-            } 
-            else if (it == sortedPoints.end()) {
-                val_bottom = sortedPoints.back().second;
-                found_bottom = true;
-            }
-            else {
-                auto prev = it - 1;
-                double x_prev = prev->first;
-                double val_prev = prev->second;
-                double x_next = it->first;
-                double val_next = it->second;
-                
-                // Линейная интерполяция
-                val_bottom = val_prev + (val_next - val_prev) * (x - x_prev) / (x_next - x_prev);
-                found_bottom = true;
-            }
-        }
+        
         
         if (!found_top && !bigRectPoints[min_y_big].empty()) {
             // Аналогично для верхней части
