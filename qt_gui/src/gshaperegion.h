@@ -147,6 +147,11 @@ private:
     double m_currentValueMin = 0.0;
     double m_currentValueMax = 0.0;
 
+    // Store last data for dynamic axes updates
+    std::vector<double> m_lastNumericalSolutionData;
+    std::vector<double> m_lastTrueSolutionData;
+    std::vector<double> m_lastErrorData;
+
     /**
      * @brief Создать массивы данных для одной Г-образной поверхности
      * 
@@ -183,12 +188,8 @@ private:
         const QString& seriesName
     );
 
-    /**
-     * @brief Обновить диапазоны осей в зависимости от значений
-     * 
-     * @param values Значения для анализа диапазонов
-     */
     void updateAxesRanges(const std::vector<double>& values);
+    void updateDynamicAxesRanges(); // New method for dynamic updates
 };
 
 #endif // GSHAPEREGION_H
