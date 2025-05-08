@@ -12,13 +12,35 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
-#include <algorithm>
-#include <set>
+#include <algorithm> // For std::sort, std::unique, std::lower_bound
 #include <map>
+#include <set>       // For std::set to find unique coordinates easily
+#include <cmath>     // For std::abs
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+// Helper function to find the closest value in a sorted vector of unique coordinates
+double find_closest_coord(const std::vector<double>& unique_coords, double target_val) {
+    if (unique_coords.empty()) {
+        // This case should ideally not be reached if there's valid solution data
+        return target_val;
+    }
+    auto const it = std::lower_bound(unique_coords.begin(), unique_coords.end(), target_val);
+    if (it == unique_coords.begin()) {
+        return unique_coords.front();
+    }
+    if (it == unique_coords.end()) {
+        return unique_coords.back();
+    }
+    double val_before = *(it - 1);
+    double val_after = *it;
+    if (std::abs(target_val - val_before) < std::abs(target_val - val_after)) {
+        return val_before;
+    }
+    return val_after;
+}
 
 // Реализация класса SolverWorker
 SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver)
@@ -839,8 +861,9 @@ void MainWindow::setup3DVisualization() {
     showErrorCheckBox = new QCheckBox("Показать ошибку");
     showHeatMapButton = new QPushButton("Показать тепловую карту ошибки");
     
-    // Добавляем кнопку для отображения точек (для отладки)
-    QPushButton* showPointsButton = new QPushButton("Показать точки в узлах (отладка)");
+    // Добавляем кнопку для создания Г-образной поверхности
+    QPushButton* showGShapedButton = new QPushButton("Показать Г-образную поверхность");
+    connect(showGShapedButton, &QPushButton::clicked, this, &MainWindow::createGShapedSurface);
     
     // Устанавливаем начальные значения
     showSolutionCheckBox->setChecked(true);
@@ -852,14 +875,13 @@ void MainWindow::setup3DVisualization() {
     controlsLayout->addWidget(showTrueSolutionCheckBox);
     controlsLayout->addWidget(showErrorCheckBox);
     controlsLayout->addWidget(showHeatMapButton);
-    controlsLayout->addWidget(showPointsButton);
+    controlsLayout->addWidget(showGShapedButton); // Добавляем новую кнопку
     
     // Соединяем сигналы и слоты для управления видимостью серий
     connect(showSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onSolutionSeriesVisibilityChanged);
     connect(showTrueSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onTrueSolutionSeriesVisibilityChanged);
     connect(showErrorCheckBox, &QCheckBox::toggled, this, &MainWindow::onErrorSeriesVisibilityChanged);
     connect(showHeatMapButton, &QPushButton::clicked, this, &MainWindow::onShowHeatmapClicked);
-    connect(showPointsButton, &QPushButton::clicked, this, &MainWindow::showPointsIn3D);
     
     // Создаем основной layout для вкладки 3D-визуализации
     QVBoxLayout *mainLayout = new QVBoxLayout(visualization3DTab);
@@ -1049,37 +1071,67 @@ void MainWindow::update3DSurfaces() {
         return;
     }
 
-    // Устанавливаем диапазоны осей на основе параметров (общий ограничивающий прямоугольник)
-    graph3D->axisX()->setRange(params.a_bound, params.b_bound); // Физическая X
-    graph3D->axisZ()->setRange(params.c_bound, params.d_bound); // Физическая Y (становится Z на графике)
-    // Диапазон оси Y (значение) будет установлен автоматически Q3DSurface на основе данных
-
-    // Создаем данные для поверхности решения
-    QSurfaceDataArray* solutionData = createSurfaceDataArrayFromPoints(
-        results.x_coords, results.y_coords, results.solution);
-    solutionSeries->dataProxy()->resetArray(solutionData);
-
-    // Создаем данные для поверхности точного решения
-    if (!results.true_solution.empty() && results.true_solution.size() == results.x_coords.size()) {
-        QSurfaceDataArray* trueData = createSurfaceDataArrayFromPoints(
-            results.x_coords, results.y_coords, results.true_solution);
-        trueSolutionSeries->dataProxy()->resetArray(trueData);
-    } else {
-        qDebug() << "update3DSurfaces: Данные точного решения отсутствуют или не соответствуют.";
-        trueSolutionSeries->dataProxy()->resetArray(new QSurfaceDataArray()); // Очищаем их
+    // Очищаем существующие данные
+    if (graph3D) {
+        graph3D->removeSeries(solutionSeries);
+        graph3D->removeSeries(trueSolutionSeries);
+        graph3D->removeSeries(errorSeries);
     }
 
-    // Создаем данные для поверхности ошибки
-    if (!results.error.empty() && results.error.size() == results.x_coords.size()) {
-        QSurfaceDataArray* errorData = createSurfaceDataArrayFromPoints(
-            results.x_coords, results.y_coords, results.error);
-        errorSeries->dataProxy()->resetArray(errorData);
-    } else {
-        qDebug() << "update3DSurfaces: Данные ошибки отсутствуют или не соответствуют.";
-        errorSeries->dataProxy()->resetArray(new QSurfaceDataArray()); // Очищаем их
+    // Получаем параметры области
+    double a = params.a_bound;
+    double b = params.b_bound;
+    double c = params.c_bound;
+    double d = params.d_bound;
+    double x_split = (a + b) / 2.0;
+    double y_split = (c + d) / 2.0;
+
+    // Устанавливаем диапазоны осей на основе параметров
+    graph3D->axisX()->setRange(a, b);
+    graph3D->axisZ()->setRange(c, d);
+
+    // Находим минимальное и максимальное значение для настройки оси Y
+    double minY = std::numeric_limits<double>::max();
+    double maxY = std::numeric_limits<double>::lowest();
+    
+    for (size_t i = 0; i < results.solution.size(); ++i) {
+        if (!std::isnan(results.solution[i])) {
+            minY = std::min(minY, results.solution[i]);
+            maxY = std::max(maxY, results.solution[i]);
+        }
     }
     
+    if (!results.true_solution.empty()) {
+        for (size_t i = 0; i < results.true_solution.size(); ++i) {
+            if (!std::isnan(results.true_solution[i])) {
+                minY = std::min(minY, results.true_solution[i]);
+                maxY = std::max(maxY, results.true_solution[i]);
+            }
+        }
+    }
+    
+    if (!results.error.empty()) {
+        for (size_t i = 0; i < results.error.size(); ++i) {
+            if (!std::isnan(results.error[i])) {
+                minY = std::min(minY, results.error[i]);
+                maxY = std::max(maxY, results.error[i]);
+            }
+        }
+    }
+    
+    // Добавляем небольшой запас для лучшего отображения
+    minY = minY - 0.1 * std::abs(minY);
+    maxY = maxY + 0.1 * std::abs(maxY);
+    
+    graph3D->axisY()->setRange(minY, maxY);
+
+    // Создаем Г-образные поверхности для каждого типа данных
+
+
     showHeatMapButton->setEnabled(true);
+    
+    // Обновляем заголовок
+    graph3D->setTitle("Численное решение на Г-образной области");
 }
 
 
@@ -1248,11 +1300,9 @@ void MainWindow::onShowHeatmapClicked() {
 
 // Проверка принадлежности точки Г-образной области
 bool MainWindow::isInDomain(double x, double y) {
-    // Параметры для Г-образной области (инвертированной L)
-    // Предполагаем, что область состоит из трёх "квадрантов"
+    // Параметры для Г-образной области, исключающей левый нижний квадрант
     
     // Координаты "разделителей" для Г-образной области
-    // Эти координаты нужно настроить в зависимости от вашей конкретной геометрии
     double x_split = (params.a_bound + params.b_bound) / 2.0;
     double y_split = (params.c_bound + params.d_bound) / 2.0;
     
@@ -1260,10 +1310,10 @@ bool MainWindow::isInDomain(double x, double y) {
     bool is_in_q1 = (x <= x_split && y <= y_split);      // Нижний-левый квадрант
     bool is_in_q2 = (x > x_split && y <= y_split);       // Нижний-правый квадрант
     bool is_in_q3 = (x <= x_split && y > y_split);       // Верхний-левый квадрант
-    // bool is_in_q4 = (x > x_split && y > y_split);     // Верхний-правый квадрант (исключён из области)
+    bool is_in_q4 = (x > x_split && y > y_split);        // Верхний-правый квадрант
     
-    // Точка принадлежит области, если находится в одном из трёх квадрантов
-    return is_in_q1 || is_in_q2 || is_in_q3;
+    // Точка принадлежит Г-образной области, если находится в любом квадранте, кроме левого нижнего
+    return is_in_q2 || is_in_q3 || is_in_q4;
 }
 
 // Создание 3D-поверхности из векторов координат и значений
@@ -1287,7 +1337,7 @@ QSurfaceDataArray* MainWindow::createSurfaceDataArrayFromPoints(
     // Физическая X-координата станет осью X в Q3DSurface
     std::map<double, std::vector<std::pair<double, double>>> rows_map; // Ключ: y_physical, Значение: список (x_physical, value)
     
-    for (size_t i = 0; i < values.size(); ++i) {
+    for (size_t i = 0; i < values.size(); i++) {
         // NaN-значения для 'value' допустимы и создадут "дыры" в поверхности
         // Проверяем, что точка принадлежит Г-образной области
         if (isInDomain(x_coords[i], y_coords[i]) || true) {
@@ -1326,75 +1376,356 @@ QSurfaceDataArray* MainWindow::createSurfaceDataArrayFromPoints(
     return dataArray;
 }
 
-// Функция для отображения точек в 3D без построения поверхности (для отладки)
-void MainWindow::showPointsIn3D() {
-    // Проверяем наличие данных
-    if (!solveSuccessful || results.solution.empty() || 
+
+
+// Метод для создания Г-образной поверхности с использованием результатов решения
+void MainWindow::createGShapedSurface() {
+    if (!graph3D || !solveSuccessful || results.solution.empty() || 
         results.x_coords.empty() || results.y_coords.empty()) {
-        qDebug() << "showPointsIn3D: Нет данных для отображения";
+        QMessageBox::warning(this, "Предупреждение", "Нет данных для построения Г-образной поверхности");
         return;
     }
 
-    // Очистить текущие серии
-    if (graph3D) {
+    // Очищаем предыдущие серии, если они есть
+    if (solutionSeries) {
         graph3D->removeSeries(solutionSeries);
+        delete solutionSeries;
+        solutionSeries = nullptr;
+    }
+    if (trueSolutionSeries) {
         graph3D->removeSeries(trueSolutionSeries);
+        delete trueSolutionSeries;
+        trueSolutionSeries = nullptr;
+    }
+    if (errorSeries) {
         graph3D->removeSeries(errorSeries);
+        delete errorSeries;
+        errorSeries = nullptr;
     }
 
-    // Создаем новую серию для точек (QSurface3DSeries вместо QScatter3DSeries)
-    QSurface3DSeries* pointsSeries = new QSurface3DSeries();
+    // Определяем границы квадрантов
+    double x_split = (params.a_bound + params.b_bound) / 2.0;
+    double y_split = (params.c_bound + params.d_bound) / 2.0;
+
+    // Данные для Г-образной поверхности
+    QSurfaceDataArray *bigRectData = new QSurfaceDataArray;
+    QSurfaceDataArray *smallRectData = new QSurfaceDataArray;
+    QSurfaceDataArray *connectorData = new QSurfaceDataArray;
+
+    // Группируем точки по Y-координате для создания строк данных
+    std::map<double, std::vector<std::pair<double, double>>> bigRectPoints; // y -> [(x, value)]
+    std::map<double, std::vector<std::pair<double, double>>> smallRectPoints; // y -> [(x, value)]
+
+    // Распределяем точки решения по соответствующим областям
+    for (size_t i = 0; i < results.solution.size(); i++) {
+        double x = results.x_coords[i];
+        double y = results.y_coords[i];
+        double value = results.solution[i];
+
+        // Проверяем, в какой квадрант попадает точка
+        bool is_quadrant1 = (x <= x_split && y >= y_split);   // Верхний-левый квадрант
+        bool is_quadrant2 = (x > x_split && y > y_split);    // Верхний-правый квадрант
+        bool is_quadrant4 = (x > x_split && y <= y_split);     // Нижний-правый квадрант
+
+        // Распределяем точки по соответствующим группам
+        if (is_quadrant1 || is_quadrant2) {
+            // Большой прямоугольник (квадранты 1 и 2)
+            bigRectPoints[y].push_back({x, value});
+        } 
+        else if (is_quadrant4) {
+            // Малый прямоугольник (квадрант 4)
+            smallRectPoints[y].push_back({x, value});
+        }
+    }
+
+    // Находим минимальное y в большой области
+    double min_y_big = std::numeric_limits<double>::max();
+    for (const auto& [y, _] : bigRectPoints) {
+        min_y_big = std::min(min_y_big, y);
+    }
     
-    // Настраиваем отображение точек
-    pointsSeries->setDrawMode(QSurface3DSeries::DrawSurface);
-    pointsSeries->setFlatShadingEnabled(true);
-    pointsSeries->setBaseColor(QColor(0, 0, 255)); // Синий цвет
-    pointsSeries->setMeshSmooth(false);
-    pointsSeries->setName("Точки в узлах");
+    // Находим максимальное y в малой области
+    double max_y_small = std::numeric_limits<double>::lowest();
+    for (const auto& [y, _] : smallRectPoints) {
+        max_y_small = std::max(max_y_small, y);
+    }
+
+    qDebug() << "Минимальное Y в большой области:" << min_y_big;
+    qDebug() << "Максимальное Y в малой области:" << max_y_small;
     
-    // Создаем массив данных для точек
-    QSurfaceDataArray* pointsDataArray = new QSurfaceDataArray();
-    
-    // Группируем точки по их Y-координатам
-    std::map<double, std::vector<std::pair<double, double>>> y_groups;
-    
-    for (size_t i = 0; i < results.solution.size(); ++i) {
-        if (isInDomain(results.x_coords[i], results.y_coords[i]) && 
-            !std::isnan(results.solution[i])) {
-            // Группируем точки по Y-координате
-            y_groups[results.y_coords[i]].push_back({results.x_coords[i], results.solution[i]});
+    // Точки перемычки: точки на границе между двумя областями
+    std::map<double, std::vector<std::pair<double, double>>> connectorPoints; // x -> [(y, value)]
+
+    // Собираем соответствующие x-координаты из малой области с max_y_small
+    std::set<double> x_coords_small;
+    if (smallRectPoints.find(max_y_small) != smallRectPoints.end()) {
+        for (const auto& [x, val] : smallRectPoints[max_y_small]) {
+            if (x >= x_split) { // Только правая часть
+                x_coords_small.insert(x);
+            }
         }
     }
     
-    // Создаем ряды точек для каждой уникальной Y-координаты
-    for (const auto& [y_coord, points] : y_groups) {
-        QSurfaceDataRow* row = new QSurfaceDataRow(points.size());
-        
-        // Заполняем ряд точками
-        for (size_t i = 0; i < points.size(); ++i) {
-            (*row)[i] = QVector3D(points[i].first, points[i].second, y_coord);
+    // Собираем соответствующие x-координаты из большой области с min_y_big
+    std::set<double> x_coords_big;
+    if (bigRectPoints.find(min_y_big) != bigRectPoints.end()) {
+        for (const auto& [x, val] : bigRectPoints[min_y_big]) {
+            if (x >= x_split) { // Только правая часть для соответствия с малым прямоугольником
+                x_coords_big.insert(x);
+            }
+        }
+    }
+
+    // Получаем объединение всех x-координат для перемычки
+    std::set<double> all_x_coords;
+    all_x_coords.insert(x_coords_small.begin(), x_coords_small.end());
+    all_x_coords.insert(x_coords_big.begin(), x_coords_big.end());
+    
+    qDebug() << "Количество точек x в перемычке:" << all_x_coords.size();
+
+    // Построение перемычки
+    // Создаем промежуточные строки с равномерно распределенными y между max_y_small и min_y_big
+    int connector_rows = 5; // Количество строк в перемычке
+    double y_step = (min_y_big - max_y_small) / (connector_rows + 1);
+    
+    // Для каждой x-координаты находим соответствующие значения на обоих концах перемычки
+    for (double x : all_x_coords) {
+        // Ищем значение в нижней части перемычки (верх малого прямоугольника)
+        double val_bottom = 0.0;
+        bool found_bottom = false;
+        if (smallRectPoints.find(max_y_small) != smallRectPoints.end()) {
+            for (const auto& [x_val, value] : smallRectPoints[max_y_small]) {
+                if (std::abs(x_val - x) < 0.0001) { // Допуск для сравнения с плавающей точкой
+                    val_bottom = value;
+                    found_bottom = true;
+                    break;
+                }
+            }
         }
         
-        // Добавляем ряд в массив данных
-        *pointsDataArray << row;
+        // Ищем значение в верхней части перемычки (низ большого прямоугольника)
+        double val_top = 0.0;
+        bool found_top = false;
+        if (bigRectPoints.find(min_y_big) != bigRectPoints.end()) {
+            for (const auto& [x_val, value] : bigRectPoints[min_y_big]) {
+                if (std::abs(x_val - x) < 0.0001) {
+                    val_top = value;
+                    found_top = true;
+                    break;
+                }
+            }
+        }
+        
+        // Если не нашли точное соответствие, находим ближайшие соседние точки и интерполируем
+        if (!found_bottom && !smallRectPoints[max_y_small].empty()) {
+            // Сортируем точки по X-координате
+            std::vector<std::pair<double, double>> sortedPoints = smallRectPoints[max_y_small];
+            std::sort(sortedPoints.begin(), sortedPoints.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+            
+            // Находим ближайшую левую и правую точки
+            auto it = std::lower_bound(sortedPoints.begin(), sortedPoints.end(), std::make_pair(x, 0.0),
+                                     [](const auto& a, const auto& b) { return a.first < b.first; });
+            
+            if (it == sortedPoints.begin()) {
+                val_bottom = sortedPoints.front().second;
+                found_bottom = true;
+            } 
+            else if (it == sortedPoints.end()) {
+                val_bottom = sortedPoints.back().second;
+                found_bottom = true;
+            }
+            else {
+                auto prev = it - 1;
+                double x_prev = prev->first;
+                double val_prev = prev->second;
+                double x_next = it->first;
+                double val_next = it->second;
+                
+                // Линейная интерполяция
+                val_bottom = val_prev + (val_next - val_prev) * (x - x_prev) / (x_next - x_prev);
+                found_bottom = true;
+            }
+        }
+        
+        if (!found_top && !bigRectPoints[min_y_big].empty()) {
+            // Аналогично для верхней части
+            std::vector<std::pair<double, double>> sortedPoints = bigRectPoints[min_y_big];
+            std::sort(sortedPoints.begin(), sortedPoints.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+            
+            auto it = std::lower_bound(sortedPoints.begin(), sortedPoints.end(), std::make_pair(x, 0.0),
+                                     [](const auto& a, const auto& b) { return a.first < b.first; });
+            
+            if (it == sortedPoints.begin()) {
+                val_top = sortedPoints.front().second;
+                found_top = true;
+            } 
+            else if (it == sortedPoints.end()) {
+                val_top = sortedPoints.back().second;
+                found_top = true;
+            }
+            else {
+                auto prev = it - 1;
+                double x_prev = prev->first;
+                double val_prev = prev->second;
+                double x_next = it->first;
+                double val_next = it->second;
+                
+                val_top = val_prev + (val_next - val_prev) * (x - x_prev) / (x_next - x_prev);
+                found_top = true;
+            }
+        }
+        
+        // Если нашли значения на обоих концах перемычки, создаем промежуточные строки
+        if (found_bottom && found_top) {
+            // Линейная интерполяция значений между верхом и низом перемычки
+            double val_step = (val_top - val_bottom) / (connector_rows + 1);
+            
+            // Добавляем нижнюю точку перемычки (которая совпадает с верхом малого прямоугольника)
+            connectorPoints[max_y_small].push_back({x, val_bottom});
+            
+            // Добавляем промежуточные точки
+            for (int i = 1; i <= connector_rows; i++) {
+                double y = max_y_small + i * y_step;
+                double val = val_bottom + i * val_step;
+                connectorPoints[y].push_back({x, val});
+            }
+            
+            // Добавляем верхнюю точку перемычки (которая совпадает с низом большого прямоугольника)
+            connectorPoints[min_y_big].push_back({x, val_top});
+        }
+    }
+
+    // Создаем QSurfaceDataArray для большого прямоугольника
+    for (auto const& [y, points] : bigRectPoints) {
+        if (points.empty()) continue;
+        
+        QSurfaceDataRow* row = new QSurfaceDataRow();
+        
+        // Сортируем точки по X-координате
+        std::vector<std::pair<double, double>> sortedPoints = points;
+        std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                 [](const auto& a, const auto& b) { return a.first < b.first; });
+        
+        for (const auto& [x, val] : sortedPoints) {
+            row->append(QVector3D(x, val, y));
+        }
+        
+        bigRectData->append(row);
+    }
+
+    // Создаем QSurfaceDataArray для малого прямоугольника
+    for (auto const& [y, points] : smallRectPoints) {
+        if (points.empty()) continue;
+        
+        QSurfaceDataRow* row = new QSurfaceDataRow();
+        
+        // Сортируем точки по X-координате
+        std::vector<std::pair<double, double>> sortedPoints = points;
+        std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                 [](const auto& a, const auto& b) { return a.first < b.first; });
+        
+        for (const auto& [x, val] : sortedPoints) {
+            row->append(QVector3D(x, val, y));
+        }
+        
+        smallRectData->append(row);
+    }
+
+    // Создаем QSurfaceDataArray для перемычки
+    for (auto const& [y, points] : connectorPoints) {
+        if (points.empty()) continue;
+        
+        QSurfaceDataRow* row = new QSurfaceDataRow();
+        
+        // Сортируем точки по X-координате
+        std::vector<std::pair<double, double>> sortedPoints = points;
+        std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                 [](const auto& a, const auto& b) { return a.first < b.first; });
+        
+        for (const auto& [x, val] : sortedPoints) {
+            row->append(QVector3D(x, val, y));
+        }
+        
+        connectorData->append(row);
+    }
+
+    // Создаем и настраиваем серии для каждой части Г-образной области
+    QSurface3DSeries *bigRectSeries = new QSurface3DSeries();
+    bigRectSeries->setDrawMode(QSurface3DSeries::DrawSurfaceAndWireframe);
+    bigRectSeries->setFlatShadingEnabled(false);
+    bigRectSeries->setBaseColor(QColor(0, 0, 255)); // Синий для большого прямоугольника
+    bigRectSeries->setName("Большой прямоугольник");
+    
+    QSurface3DSeries *smallRectSeries = new QSurface3DSeries();
+    smallRectSeries->setDrawMode(QSurface3DSeries::DrawSurfaceAndWireframe);
+    smallRectSeries->setFlatShadingEnabled(false);
+    smallRectSeries->setBaseColor(QColor(0, 255, 0)); // Зеленый для малого прямоугольника
+    smallRectSeries->setName("Малый прямоугольник");
+    
+    QSurface3DSeries *connectorSeries = new QSurface3DSeries();
+    connectorSeries->setDrawMode(QSurface3DSeries::DrawSurfaceAndWireframe);
+    connectorSeries->setFlatShadingEnabled(false);
+    connectorSeries->setBaseColor(QColor(255, 0, 0)); // Красный для перемычки
+    connectorSeries->setName("Перемычка");
+
+    // Устанавливаем данные для каждой серии
+    if (!bigRectData->isEmpty()) {
+        bigRectSeries->dataProxy()->resetArray(bigRectData);
+        graph3D->addSeries(bigRectSeries);
+    } else {
+        delete bigRectData;
+        delete bigRectSeries;
+        bigRectSeries = nullptr;
     }
     
-    // Устанавливаем данные в серию
-    pointsSeries->dataProxy()->resetArray(pointsDataArray);
+    if (!smallRectData->isEmpty()) {
+        smallRectSeries->dataProxy()->resetArray(smallRectData);
+        graph3D->addSeries(smallRectSeries);
+    } else {
+        delete smallRectData;
+        delete smallRectSeries;
+        smallRectSeries = nullptr;
+    }
     
-    // Добавляем серию в график
-    graph3D->addSeries(pointsSeries);
-    
-    // Настраиваем отображение точек без сглаживания
-    //graph3D->setMeshSmoothing(false);
-    
-    // Устанавливаем диапазоны осей
+    if (!connectorData->isEmpty()) {
+        connectorSeries->dataProxy()->resetArray(connectorData);
+        graph3D->addSeries(connectorSeries);
+    } else {
+        delete connectorData;
+        delete connectorSeries;
+        connectorSeries = nullptr;
+    }
+
+    // Настраиваем оси
+    graph3D->axisX()->setTitle("X");
+    graph3D->axisY()->setTitle("Значение");
+    graph3D->axisZ()->setTitle("Y");
     graph3D->axisX()->setRange(params.a_bound, params.b_bound);
     graph3D->axisZ()->setRange(params.c_bound, params.d_bound);
+
+    // Находим минимальное и максимальное значение для оси Y
+    double minY = std::numeric_limits<double>::max();
+    double maxY = std::numeric_limits<double>::lowest();
     
-    // Переходим на вкладку 3D
-    ui->tabWidget->setCurrentIndex(3); // Предполагаем, что 3D вкладка имеет индекс 3
+    for (const auto& val : results.solution) {
+        if (!std::isnan(val)) {
+            minY = std::min(minY, val);
+            maxY = std::max(maxY, val);
+        }
+    }
     
+    // Добавляем запас для лучшего отображения
+    minY = minY - 0.1 * std::abs(minY);
+    maxY = maxY + 0.1 * std::abs(maxY);
+    
+    graph3D->axisY()->setRange(minY, maxY);
+
+    // Сохраняем ссылки на серии для возможного управления в будущем
+    solutionSeries = bigRectSeries;
+
     // Обновляем заголовок
-    graph3D->setTitle("Точки в узлах (режим отладки)");
+    graph3D->setTitle("Численное решение на Г-образной области");
+
 }

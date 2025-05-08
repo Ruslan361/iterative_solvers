@@ -60,7 +60,10 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-
+    
+    // Публичный метод для создания и отображения Г-образной поверхности
+    void createGShapedSurface();
+    
 private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
@@ -186,4 +189,8 @@ private:
     
     // Функция для отображения точек в 3D без построения поверхности (для отладки)
     void showPointsIn3D();
+    
+    // Метод для создания Г-образной поверхности из произвольного набора данных
+    void createGShapedSurfaceForData(const std::vector<double>& data, const QColor& color, 
+                                     const QString& seriesName, QSurface3DSeries* series);
 };
