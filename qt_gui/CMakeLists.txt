@@ -23,11 +23,15 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Charts DataVisualization)
 set(GUI_SOURCES
     src/main.cpp
     src/mainwindow.cpp
+    src/gshaperegion.cpp
+    src/heatmapgenerator.cpp
 )
 
 # Заголовочные файлы GUI
 set(GUI_HEADERS
     src/mainwindow.h
+    src/gshaperegion.h
+    src/heatmapgenerator.h
 )
 
 # UI файлы для Qt Designer
