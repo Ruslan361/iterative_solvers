@@ -483,7 +483,7 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
     updateSliceControls(); // Update controls based on new data
 
     // Create series for the selected slice
-    auto *series = new QLineSeries(); // MODIFIED: Plot numerical solution as a line
+    auto *series = new QLineSeries(); 
     auto *trueSeries = new QLineSeries();
 
     QString chartTitle = "";
@@ -491,24 +491,37 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
     QString yAxisTitle = "Значение";
 
     // Determine which data to plot based on chartTypeComboBox
-    const std::vector<double>* currentData = &results.solution; // Default to solution
-    QString dataTypeString = "Решение";
+    const std::vector<double>* currentData = nullptr;
+    const std::vector<double>* trueSolutionDataForPlot = nullptr; // For results.true_solution
+    QString dataTypeString = "";
+
     int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
-    if (chartTypeIndex == 1) { // Error
+    if (chartTypeIndex == 0) { // Решение
+        currentData = &results.solution;
+        // Use results.true_solution if available and consistent
+        if (!results.true_solution.empty() && results.true_solution.size() == results.solution.size()) {
+            trueSolutionDataForPlot = &results.true_solution;
+        }
+        dataTypeString = "Решение";
+    } else if (chartTypeIndex == 1) { // Ошибка
         currentData = &results.error;
         dataTypeString = "Ошибка";
-    } else if (chartTypeIndex == 2) { // Residual
+    } else if (chartTypeIndex == 2) { // Невязка
         currentData = &results.residual;
         dataTypeString = "Невязка";
     }
 
-    if (currentData->empty()) {
-        ui->chartView->setChart(new QChart()); // Set a new empty chart. QChartView handles the old one.
+    if (!currentData || currentData->empty()) {
+        ui->chartView->setChart(new QChart()); // Set a new empty chart.
+        delete series; // Clean up allocated series
+        delete trueSeries;
         return;
     }
 
     series->setName(QString("Численное %1").arg(dataTypeString));
-    trueSeries->setName(QString("Истинное %1").arg(dataTypeString));
+    if (trueSolutionDataForPlot) {
+        trueSeries->setName(QString("Истинное %1").arg(dataTypeString));
+    }
 
     if (m_currentSliceAxis == 0 && !m_unique_x_coords.empty() && m_currentSliceIndex < m_unique_x_coords.size()) { // Slice along Y (fixed X)
         double fixed_x = m_unique_x_coords[m_currentSliceIndex];
@@ -520,14 +533,13 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
                 if (i < currentData->size()) { // Ensure index is valid
                     series->append(results.y_coords[i], (*currentData)[i]);
                 }
+                if (trueSolutionDataForPlot && i < trueSolutionDataForPlot->size()) {
+                    trueSeries->append(results.y_coords[i], (*trueSolutionDataForPlot)[i]);
+                }
             }
         }
-        // True solution for this slice (only if plotting "Решение")
-        if (chartTypeIndex == 0) {
-            for (double y_val : m_unique_y_coords) {
-                trueSeries->append(y_val, u(fixed_x, y_val));
-            }
-        }
+        // The old block for populating trueSeries by calling u(fixed_x, y_val) is removed.
+        // True solution is now plotted using results.true_solution at the same points as the numerical solution.
 
     } else if (m_currentSliceAxis == 1 && !m_unique_y_coords.empty() && m_currentSliceIndex < m_unique_y_coords.size()) { // Slice along X (fixed Y)
         double fixed_y = m_unique_y_coords[m_currentSliceIndex];
@@ -539,14 +551,12 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
                  if (i < currentData->size()) { // Ensure index is valid
                     series->append(results.x_coords[i], (*currentData)[i]);
                 }
+                if (trueSolutionDataForPlot && i < trueSolutionDataForPlot->size()) {
+                    trueSeries->append(results.x_coords[i], (*trueSolutionDataForPlot)[i]);
+                }
             }
         }
-        // True solution for this slice (only if plotting "Решение")
-        if (chartTypeIndex == 0) {
-            for (double x_val : m_unique_x_coords) {
-                trueSeries->append(x_val, u(x_val, fixed_y));
-            }
-        }
+        // The old block for populating trueSeries by calling u(x_val, fixed_y) is removed.
     } else {
         // Fallback or no data for slicing
         chartTitle = QString("Нет данных для среза (%1)").arg(dataTypeString);
@@ -556,9 +566,12 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
 
     chart->addSeries(series);
     bool trueSeriesAdded = false;
-    if (chartTypeIndex == 0 && trueSeries->points().size() > 0) { // Only show true solution for the "Solution" chart type and if it has points
+    if (trueSolutionDataForPlot && trueSeries->points().size() > 0) { // Check if true solution data was used and series has points
        chart->addSeries(trueSeries);
        trueSeriesAdded = true;
+    } else {
+        delete trueSeries; // trueSeries was allocated but not added to chart
+        trueSeries = nullptr; 
     }
 
     auto *axisX = new QValueAxis();
