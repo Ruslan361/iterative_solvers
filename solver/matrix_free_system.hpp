@@ -20,19 +20,19 @@ private:
     std::vector<double> rhs;
     
     // Helper functions for grid operations
-    double function(double x, double y);
-    double solution(double x, double y);
-    bool is_left_boundary(int x, int y);
-    bool is_right_boundary(int x, int y);
-    bool is_top_boundary(int x, int y);
-    bool is_bottom_boundary(int x, int y);
-    bool is_boundary(int x, int y);
-    double calculate_value(int x, int y, double x_k, double y_k);
-    double calculate_x(int x);
-    double calculate_y(int y);
-    int calculate_position_in_template(int x, int y);
-    int calculate_position_in_upper_area(int x, int y);
-    int calculate_position_in_bottom_edge(int x, int y);
+    double function(double x, double y) const;
+    double solution(double x, double y) const;
+    bool is_left_boundary(int x, int y) const;
+    bool is_right_boundary(int x, int y) const;
+    bool is_top_boundary(int x, int y) const;
+    bool is_bottom_boundary(int x, int y) const;
+    bool is_boundary(int x, int y) const;
+    double calculate_value(int x, int y, double x_k, double y_k) const;
+    double calculate_x(int x) const;
+    double calculate_y(int y) const;
+    int calculate_position_in_template(int x, int y) const;
+    int calculate_position_in_upper_area(int x, int y) const;
+    int calculate_position_in_bottom_edge(int x, int y) const;
     
     // Calculate system size based on the grid dimensions
     int calculate_system_size();

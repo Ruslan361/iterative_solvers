@@ -50,15 +50,22 @@ endif()
 # Добавление исходных файлов для библиотеки
 set(DIRICHLET_SOLVER_SOURCES
     grid_system.cpp
+    grid_system_square.cpp
     msg_solver.cpp
     dirichlet_solver.cpp
+    dirichlet_solver_square.cpp
+    default_functions.cpp
 )
 
 # Добавление заголовочных файлов
 set(DIRICHLET_SOLVER_HEADERS
     grid_system.h
+    grid_system_square.h
     solver.hpp
     msg_solver.hpp
+    dirichlet_solver.hpp
+    dirichlet_solver_square.hpp
+
 )
 
 # Создание библиотеки вместо исполняемого файла

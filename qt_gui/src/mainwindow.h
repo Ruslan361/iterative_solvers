@@ -22,6 +22,7 @@
 // Подключаем заголовки решателя
 #include "dirichlet_solver.hpp"
 #include "grid_system.h"
+#include "dirichlet_solver_square.hpp" // <<< ADD THIS INCLUDE
 
 // Подключаем модуль 3D-визуализации Qt
 #include <QtDataVisualization/QtDataVisualization>
@@ -41,21 +42,26 @@ class SolverWorker : public QObject {
 
 public:
     explicit SolverWorker(std::unique_ptr<DirichletSolver> solver);
+    explicit SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq); // <<< ADD THIS CONSTRUCTOR
     ~SolverWorker() = default;
     
     // Getter метод для доступа к solver
     DirichletSolver* getSolver() { return solver.get(); }
+    DirichletSolverSquare* getSolverSquare() { return solver_sq.get(); } // <<< ADD THIS GETTER
 
 public slots:
     void process();
 
 signals:
     void resultReady(SolverResults results);
+    void resultReadySquare(SquareSolverResults results); // <<< ADD THIS SIGNAL
     void finished();
     void iterationUpdate(int iteration, double precision, double residual, double error);
 
 private:
     std::unique_ptr<DirichletSolver> solver;
+    std::unique_ptr<DirichletSolverSquare> solver_sq; // <<< ADD THIS MEMBER
+    bool is_square_solver = false; // <<< ADD THIS MEMBER
 };
 
 class MainWindow : public QMainWindow
@@ -90,6 +96,7 @@ private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
     void handleResults(SolverResults results);
+    void handleResultsSquare(SquareSolverResults results); // <<< ADD THIS SLOT
     void updateIterationInfo(int iteration, double precision, double residual, double error);
     void onSolverFinished();
     void onSaveResultsButtonClicked();
@@ -111,9 +118,11 @@ private:
     
     // Объект решателя
     std::unique_ptr<DirichletSolver> solver;
+    std::unique_ptr<DirichletSolverSquare> solver_square; // <<< ADD THIS MEMBER
     
     // Результаты решения
     SolverResults results;
+    SquareSolverResults results_square; // <<< ADD THIS MEMBER
     
     // Поток для решателя
     QThread* solverThread = nullptr;
@@ -172,6 +181,7 @@ private:
         bool use_residual;
         bool use_exact_error;
         bool use_max_iterations;
+        QString solver_type; // <<< ADD THIS MEMBER
     } params;
     
     // Метод для очистки потока после завершения
@@ -180,6 +190,7 @@ private:
     // Методы для 3D визуализации
     void setup3DVisualization();
     void update3DSurfaces();
+    void update3DSurfacesSquare(); // <<< ADD THIS DECLARATION
     
     // 3D визуализация объекты
     QWidget* visualization3DTab;

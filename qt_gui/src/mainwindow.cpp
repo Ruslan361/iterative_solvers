@@ -47,7 +47,7 @@ double find_closest_coord(const std::vector<double>& unique_coords, double targe
 
 // Реализация класса SolverWorker
 SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver)
-    : solver(std::move(solver)) {
+    : solver(std::move(solver)), is_square_solver(false) { // <<< MODIFIED THIS LINE
     // Устанавливаем колбэк для отслеживания итераций
     this->solver->setIterationCallback([this](int iteration, double precision, double residual, double error) {
         // Отправляем сигнал о прогрессе
@@ -55,13 +55,29 @@ SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver)
     });
 }
 
+// <<< ADD THIS CONSTRUCTOR IMPLEMENTATION
+SolverWorker::SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq)
+    : solver_sq(std::move(solver_sq)), is_square_solver(true) {
+    // Устанавливаем колбэк для отслеживания итераций
+    this->solver_sq->setIterationCallback([this](int iteration, double precision, double residual, double error) {
+        // Отправляем сигнал о прогрессе
+        emit iterationUpdate(iteration, precision, residual, error);
+    });
+}
+
 void SolverWorker::process() {
     try {
-        // Выполняем решение в отдельном потоке
-        SolverResults results = solver->solve();
-        
-        // Отправляем сигнал с результатами
-        emit resultReady(results);
+        if (is_square_solver) { // <<< ADD THIS BLOCK
+            // Выполняем решение в отдельном потоке для квадратного решателя
+            SquareSolverResults results_sq = solver_sq->solve();
+            // Отправляем сигнал с результатами
+            emit resultReadySquare(results_sq);
+        } else {
+            // Выполняем решение в отдельном потоке
+            SolverResults results = solver->solve();
+            // Отправляем сигнал с результатами
+            emit resultReady(results);
+        }
     } catch (const std::exception& e) {
         qDebug() << "Error in solver worker: " << e.what();
     }
@@ -83,6 +99,11 @@ MainWindow::MainWindow(QWidget *parent)
     }
     
     ui->setupUi(this);
+
+    // Add solver type combobox
+    ui->solverTypeComboBox->addItem("G-Shape Solver"); // <<< UNCOMMENTED
+    ui->solverTypeComboBox->addItem("Square Solver"); // <<< UNCOMMENTED
+
 
     // Initialize slice controls
     sliceAxisLabel = ui->sliceAxisLabel;
@@ -140,6 +161,7 @@ MainWindow::MainWindow(QWidget *parent)
     params.use_residual = true;
     params.use_exact_error = false;
     params.use_max_iterations = true;
+    params.solver_type = "G-Shape Solver"; // <<< ADD THIS LINE
     
     // Обновляем UI
     ui->nSpinBox->setValue(params.n_internal);
@@ -223,6 +245,11 @@ void MainWindow::onSolveButtonClicked() {
         params.use_residual = ui->residualCheckBox->isChecked();
         params.use_exact_error = ui->exactErrorCheckBox->isChecked();
         params.use_max_iterations = ui->maxIterCheckBox->isChecked();
+        params.solver_type = ui->solverTypeComboBox->currentText(); // <<< UNCOMMENTED
+        // Ensure default solver_type is used if UI element is not available
+        // if (params.solver_type.isEmpty()) { // Default to G-Shape if not set by UI // <<< REMOVE THIS BLOCK
+        //     params.solver_type = "G-Shape Solver";
+        // }
         
         // Проверяем, что хотя бы один критерий останова выбран
         if (!params.use_precision && !params.use_residual && 
@@ -251,13 +278,22 @@ void MainWindow::onSolveButtonClicked() {
         solverThread = new QThread(this);
         
         // Передаем ownership решателя рабочему классу
-        worker = new SolverWorker(std::move(solver));
+        // worker = new SolverWorker(std::move(solver)); // <<< REMOVE THIS LINE
+        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+            worker = new SolverWorker(std::move(solver_square));
+        } else {
+            worker = new SolverWorker(std::move(solver));
+        }
         worker->moveToThread(solverThread);
         
         // Соединяем сигналы и слоты
         connect(solverThread, &QThread::started, worker, &SolverWorker::process);
         connect(worker, &SolverWorker::finished, this, &MainWindow::onSolverFinished);
-        connect(worker, &SolverWorker::resultReady, this, &MainWindow::handleResults);
+        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+            connect(worker, &SolverWorker::resultReadySquare, this, &MainWindow::handleResultsSquare);
+        } else {
+            connect(worker, &SolverWorker::resultReady, this, &MainWindow::handleResults);
+        }
         connect(worker, &SolverWorker::iterationUpdate, this, &MainWindow::updateIterationInfo);
         
         // Для автоматической очистки после завершения
@@ -290,35 +326,59 @@ void MainWindow::onStopButtonClicked() {
     ui->progressTextEdit->append("Остановка решения пользователем...");
     
     // Запрос на остановку решения (вместо просто остановки потока)
-    if (worker && worker->getSolver()) {
-        worker->getSolver()->requestStop();
-        ui->progressTextEdit->append("Сигнал остановки отправлен. Ожидаем завершения текущей итерации...");
+    if (worker) { // <<< MODIFIED THIS LINE
+        if (params.solver_type == "Square Solver" && worker->getSolverSquare()) { // <<< ADD THIS BLOCK
+            worker->getSolverSquare()->requestStop();
+            ui->progressTextEdit->append("Сигнал остановки отправлен квадратному решателю. Ожидаем завершения текущей итерации...");
+        } else if (worker->getSolver()) {
+            worker->getSolver()->requestStop();
+            ui->progressTextEdit->append("Сигнал остановки отправлен решателю. Ожидаем завершения текущей итерации...");
+        } else {
+            // Если по какой-то причине нет доступа к солверу, останавливаем поток напрямую
+            cleanupThread();
+            ui->progressTextEdit->append("Решение остановлено принудительно.");
+        }
     } else {
-        // Если по какой-то причине нет доступа к солверу, останавливаем поток напрямую
-        cleanupThread();
-        ui->progressTextEdit->append("Решение остановлено принудительно.");
+        // Обновляем интерфейс, но НЕ останавливаем поток - он завершится корректно сам
+        // когда солвер проверит флаг остановки в следующей итерации
+        ui->stopButton->setEnabled(false);
     }
-    
-    // Обновляем интерфейс, но НЕ останавливаем поток - он завершится корректно сам
-    // когда солвер проверит флаг остановки в следующей итерации
-    ui->stopButton->setEnabled(false);
 }
 
 void MainWindow::setupSolver() {
     // Создаем решатель с указанными параметрами
-    solver = std::make_unique<DirichletSolver>(
-        params.n_internal, params.m_internal,
-        params.a_bound, params.b_bound,
-        params.c_bound, params.d_bound
-    );
+    // solver = std::make_unique<DirichletSolver>( // <<< REMOVE THIS LINE
+    //     params.n_internal, params.m_internal, // <<< REMOVE THIS LINE
+    //     params.a_bound, params.b_bound, // <<< REMOVE THIS LINE
+    //     params.c_bound, params.d_bound // <<< REMOVE THIS LINE
+    // ); // <<< REMOVE THIS LINE
     
     // Устанавливаем критерии остановки
     double eps_precision = params.use_precision ? params.eps_precision : 0.0;
     double eps_residual = params.use_residual ? params.eps_residual : 0.0;
     double eps_exact_error = params.use_exact_error ? params.eps_exact_error : 0.0;
     int max_iterations = params.use_max_iterations ? params.max_iterations : INT_MAX;
-    
-    solver->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+
+    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+        solver_square = std::make_unique<DirichletSolverSquare>(
+            params.n_internal, params.m_internal,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound
+        );
+        solver_square->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+        // Enable all stopping criteria for square solver for now, can be refined
+        solver_square->setUsePrecisionStopping(params.use_precision);
+        solver_square->setUseResidualStopping(params.use_residual);
+        solver_square->setUseErrorStopping(params.use_exact_error);
+        solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
+    } else {
+        solver = std::make_unique<DirichletSolver>(
+            params.n_internal, params.m_internal,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound
+        );
+        solver->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+    }
     
     // Обновляем информацию в UI о размере матрицы
     ui->matrixInfoLabel->setText("Подготовка матрицы...");
@@ -327,6 +387,33 @@ void MainWindow::setupSolver() {
 void MainWindow::handleResults(SolverResults res) {
     // Сохраняем результаты
     results = res;
+    solveSuccessful = true;
+}
+
+// <<< ADD THIS SLOT IMPLEMENTATION
+void MainWindow::handleResultsSquare(SquareSolverResults res_sq) {
+    results_square = res_sq;
+    // Adapt or copy relevant parts from 'results' to 'results_square' for UI updates if needed
+    // For now, let's assume the UI elements can be updated using results_square directly
+    // or we can populate a common structure if that's more convenient.
+    // For simplicity, we'll try to use results_square directly where possible,
+    // and map to 'results' for common UI updates.
+
+    results.iterations = res_sq.iterations;
+    results.converged = res_sq.converged;
+    results.stop_reason = res_sq.stop_reason;
+    results.residual_norm = res_sq.residual_norm;
+    results.error_norm = res_sq.error_norm;
+    results.precision = res_sq.precision; // Assuming SquareSolverResults has precision
+
+    // The following might need careful handling if the structure of solution/coords differs significantly
+    results.solution = res_sq.solution;
+    results.true_solution = res_sq.true_solution;
+    results.error = res_sq.error;
+    results.residual = res_sq.residual; // Assuming this is available and compatible
+    results.x_coords = res_sq.x_coords;
+    results.y_coords = res_sq.y_coords;
+
     solveSuccessful = true;
 }
 
@@ -427,13 +514,33 @@ void MainWindow::onSolverFinished() {
         ui->showReportButton->setEnabled(true);
         
         // Создаем новый экземпляр решателя для использования в последующих операциях
-        setupSolver();
+        // setupSolver(); // <<< This might not be needed or might need adjustment based on solver type
         
         // Отображаем решение
-        updateChart(results.solution);
-        
-        // Обновляем 3D визуализацию
-        update3DSurfaces();
+        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+            // For square solver, we might need a different updateChart or adapt existing one
+            // For now, let's assume updateChart can handle results_square.solution
+            // or that we've mapped it to results.solution in handleResultsSquare
+            updateChart(results_square.solution);
+            update3DSurfacesSquare(); // <<< CALL NEW METHOD FOR SQUARE SOLVER
+            // Disable G-shape specific controls
+            if (gshapeRegion) { 
+                gshapeRegion->clearAllSurfaces(); 
+            }
+            showHeatMapButton->setEnabled(true); // Enable heatmap for square too (will need adaptation)
+            decimationFactorSpinBox->setEnabled(false); // Decimation might not be relevant for square
+            decimationFactorButton->setEnabled(false);
+            showTrueSolutionCheckBox->setEnabled(false); // No true solution for this custom square problem
+            showErrorCheckBox->setEnabled(false);      // No error surface if no true solution
+
+        } else {
+            updateChart(results.solution);
+            update3DSurfaces(); // This is for G-shape
+            decimationFactorSpinBox->setEnabled(true);
+            decimationFactorButton->setEnabled(true);
+            showTrueSolutionCheckBox->setEnabled(true);
+            showErrorCheckBox->setEnabled(true);
+        }
         
         // Переходим на вкладку с графиком
         ui->tabWidget->setCurrentIndex(0);
@@ -470,14 +577,29 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
         return;
     }
 
+    // Determine the source of x_coords and y_coords based on solver type
+    const std::vector<double>* x_coords_ptr = nullptr; // <<< ADD THIS LINE
+    const std::vector<double>* y_coords_ptr = nullptr; // <<< ADD THIS LINE
+    const std::vector<double>* currentData = nullptr; // <<< ADD THIS LINE
+    const std::vector<double>* trueSolutionDataForPlot = nullptr; // <<< ADD THIS LINE
+
+    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+        x_coords_ptr = &results_square.x_coords;
+        y_coords_ptr = &results_square.y_coords;
+    } else {
+        x_coords_ptr = &results.x_coords;
+        y_coords_ptr = &results.y_coords;
+    }
+
+
     // Extract unique sorted coordinates for slicing
     m_unique_x_coords.clear();
     m_unique_y_coords.clear();
-    if (!results.x_coords.empty() && !results.y_coords.empty()) {
-        std::set<double> unique_x_set(results.x_coords.begin(), results.x_coords.end());
+    if (!x_coords_ptr->empty() && !y_coords_ptr->empty()) { // <<< MODIFIED THIS LINE
+        std::set<double> unique_x_set(x_coords_ptr->begin(), x_coords_ptr->end()); // <<< MODIFIED THIS LINE
         m_unique_x_coords.assign(unique_x_set.begin(), unique_x_set.end());
 
-        std::set<double> unique_y_set(results.y_coords.begin(), results.y_coords.end());
+        std::set<double> unique_y_set(y_coords_ptr->begin(), y_coords_ptr->end()); // <<< MODIFIED THIS LINE
         m_unique_y_coords.assign(unique_y_set.begin(), unique_y_set.end());
     }
     updateSliceControls(); // Update controls based on new data
@@ -491,25 +613,41 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
     QString yAxisTitle = "Значение";
 
     // Determine which data to plot based on chartTypeComboBox
-    const std::vector<double>* currentData = nullptr;
-    const std::vector<double>* trueSolutionDataForPlot = nullptr; // For results.true_solution
+    // const std::vector<double>* currentData = nullptr; // <<< REMOVE THIS LINE
+    // const std::vector<double>* trueSolutionDataForPlot = nullptr; // For results.true_solution // <<< REMOVE THIS LINE
     QString dataTypeString = "";
 
     int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
-    if (chartTypeIndex == 0) { // Решение
-        currentData = &results.solution;
-        // Use results.true_solution if available and consistent
-        if (!results.true_solution.empty() && results.true_solution.size() == results.solution.size()) {
-            trueSolutionDataForPlot = &results.true_solution;
+    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+        if (chartTypeIndex == 0) { // Решение
+            currentData = &results_square.solution;
+            if (!results_square.true_solution.empty() && results_square.true_solution.size() == results_square.solution.size()) {
+                trueSolutionDataForPlot = &results_square.true_solution;
+            }
+            dataTypeString = "Решение (Квадрат)";
+        } else if (chartTypeIndex == 1) { // Ошибка
+            currentData = &results_square.error;
+            dataTypeString = "Ошибка (Квадрат)";
+        } else if (chartTypeIndex == 2) { // Невязка
+            currentData = &results_square.residual; // Assuming SquareSolverResults has residual
+            dataTypeString = "Невязка (Квадрат)";
         }
-        dataTypeString = "Решение";
-    } else if (chartTypeIndex == 1) { // Ошибка
-        currentData = &results.error;
-        dataTypeString = "Ошибка";
-    } else if (chartTypeIndex == 2) { // Невязка
-        currentData = &results.residual;
-        dataTypeString = "Невязка";
+    } else {
+        if (chartTypeIndex == 0) { // Решение
+            currentData = &results.solution;
+            if (!results.true_solution.empty() && results.true_solution.size() == results.solution.size()) {
+                trueSolutionDataForPlot = &results.true_solution;
+            }
+            dataTypeString = "Решение (Г-форма)";
+        } else if (chartTypeIndex == 1) { // Ошибка
+            currentData = &results.error;
+            dataTypeString = "Ошибка (Г-форма)";
+        } else if (chartTypeIndex == 2) { // Невязка
+            currentData = &results.residual;
+            dataTypeString = "Невязка (Г-форма)";
+        }
     }
+
 
     if (!currentData || currentData->empty()) {
         ui->chartView->setChart(new QChart()); // Set a new empty chart.
@@ -528,13 +666,13 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
         chartTitle = QString("%1 при X = %2 (срез по Y)").arg(dataTypeString).arg(fixed_x);
         xAxisTitle = "Y координата";
 
-        for (size_t i = 0; i < results.x_coords.size(); ++i) {
-            if (std::abs(results.x_coords[i] - fixed_x) < 1e-9) { // Compare doubles with tolerance
+        for (size_t i = 0; i < x_coords_ptr->size(); ++i) { // <<< MODIFIED THIS LINE
+            if (std::abs((*x_coords_ptr)[i] - fixed_x) < 1e-9) { // Compare doubles with tolerance // <<< MODIFIED THIS LINE
                 if (i < currentData->size()) { // Ensure index is valid
-                    series->append(results.y_coords[i], (*currentData)[i]);
+                    series->append((*y_coords_ptr)[i], (*currentData)[i]); // <<< MODIFIED THIS LINE
                 }
                 if (trueSolutionDataForPlot && i < trueSolutionDataForPlot->size()) {
-                    trueSeries->append(results.y_coords[i], (*trueSolutionDataForPlot)[i]);
+                    trueSeries->append((*y_coords_ptr)[i], (*trueSolutionDataForPlot)[i]); // <<< MODIFIED THIS LINE
                 }
             }
         }
@@ -546,13 +684,13 @@ void MainWindow::updateChart(const std::vector<double>& dataValues) {
         chartTitle = QString("%1 при Y = %2 (срез по X)").arg(dataTypeString).arg(fixed_y);
         xAxisTitle = "X координата";
 
-        for (size_t i = 0; i < results.y_coords.size(); ++i) {
-            if (std::abs(results.y_coords[i] - fixed_y) < 1e-9) { // Compare doubles with tolerance
+        for (size_t i = 0; i < y_coords_ptr->size(); ++i) { // <<< MODIFIED THIS LINE
+            if (std::abs((*y_coords_ptr)[i] - fixed_y) < 1e-9) { // Compare doubles with tolerance // <<< MODIFIED THIS LINE
                  if (i < currentData->size()) { // Ensure index is valid
-                    series->append(results.x_coords[i], (*currentData)[i]);
+                    series->append((*x_coords_ptr)[i], (*currentData)[i]); // <<< MODIFIED THIS LINE
                 }
                 if (trueSolutionDataForPlot && i < trueSolutionDataForPlot->size()) {
-                    trueSeries->append(results.x_coords[i], (*trueSolutionDataForPlot)[i]);
+                    trueSeries->append((*x_coords_ptr)[i], (*trueSolutionDataForPlot)[i]); // <<< MODIFIED THIS LINE
                 }
             }
         }
@@ -649,7 +787,12 @@ void MainWindow::updateChartErrorVsTrue(const std::vector<double>& error) {
     // This method will now be handled by updateChart by selecting "Ошибка" in chartTypeComboBox
     // For now, we can call updateChart directly if the chartType is Error
     if (ui->chartTypeComboBox->currentIndex() == 1) {
-        updateChart(results.error); // or simply results.error if called from handleResults
+        // updateChart(results.error); // or simply results.error if called from handleResults // <<< REMOVE THIS LINE
+        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+            updateChart(results_square.error);
+        } else {
+            updateChart(results.error);
+        }
     }
 }
 
@@ -657,7 +800,12 @@ void MainWindow::updateChartResidual(const std::vector<double>& residual) {
     // This method will now be handled by updateChart by selecting "Невязка" in chartTypeComboBox
     // For now, we can call updateChart directly if the chartType is Residual
     if (ui->chartTypeComboBox->currentIndex() == 2) {
-        updateChart(results.residual); // or simply results.residual if called from handleResults
+        // updateChart(results.residual); // or simply results.residual if called from handleResults // <<< REMOVE THIS LINE
+        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+            updateChart(results_square.residual);
+        } else {
+            updateChart(results.residual);
+        }
     }
 }
 
@@ -667,12 +815,32 @@ void MainWindow::onSliceAxisChanged(int index) {
     updateSliceControls();
     // Trigger chart update based on the currently selected data type in chartTypeComboBox
     int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
-    if (chartTypeIndex == 0) {
-        updateChart(results.solution);
-    } else if (chartTypeIndex == 1) {
-        updateChart(results.error);
-    } else if (chartTypeIndex == 2) {
-        updateChart(results.residual);
+    const std::vector<double>* data_to_plot = nullptr;
+
+    if (params.solver_type == "Square Solver") { 
+        if (chartTypeIndex == 0) {
+            data_to_plot = &results_square.solution;
+        } else if (chartTypeIndex == 1) { // Ошибка (для квадратного решателя пока нет)
+            // data_to_plot = &results_square.error; // No error data for custom square problem yet
+        } else if (chartTypeIndex == 2) { // Невязка
+            // data_to_plot = &results_square.residual; // Assuming SquareSolverResults has residual
+        }
+    } else {
+        if (chartTypeIndex == 0) {
+            data_to_plot = &results.solution;
+        } else if (chartTypeIndex == 1) {
+            data_to_plot = &results.error;
+        } else if (chartTypeIndex == 2) {
+            data_to_plot = &results.residual;
+        }
+    }
+    if(data_to_plot && !data_to_plot->empty()){
+        updateChart(*data_to_plot);
+    } else {
+        // Clear chart if no data for this type
+        QChart *chart = new QChart();
+        ui->chartView->setChart(chart);
+        updateSliceControls(); // Update to show no data
     }
 }
 
@@ -681,12 +849,31 @@ void MainWindow::onSliceIndexChanged(int value) {
     updateSliceControls(); // Update info label
     // Trigger chart update based on the currently selected data type in chartTypeComboBox
     int chartTypeIndex = ui->chartTypeComboBox->currentIndex();
-    if (chartTypeIndex == 0) {
-        updateChart(results.solution);
-    } else if (chartTypeIndex == 1) {
-        updateChart(results.error);
-    } else if (chartTypeIndex == 2) {
-        updateChart(results.residual);
+    const std::vector<double>* data_to_plot = nullptr;
+
+    if (params.solver_type == "Square Solver") { 
+        if (chartTypeIndex == 0) {
+            data_to_plot = &results_square.solution;
+        } else if (chartTypeIndex == 1) {
+            // data_to_plot = &results_square.error;
+        } else if (chartTypeIndex == 2) {
+            // data_to_plot = &results_square.residual;
+        }
+    } else {
+        if (chartTypeIndex == 0) {
+            data_to_plot = &results.solution;
+        } else if (chartTypeIndex == 1) {
+            data_to_plot = &results.error;
+        } else if (chartTypeIndex == 2) {
+            data_to_plot = &results.residual;
+        }
+    }
+    if(data_to_plot && !data_to_plot->empty()){
+        updateChart(*data_to_plot);
+    } else {
+        QChart *chart = new QChart();
+        ui->chartView->setChart(chart);
+        updateSliceControls(); 
     }
 }
 
@@ -776,7 +963,14 @@ void MainWindow::setup3DVisualization() {
     decimationLayout->addWidget(decimationFactorButton);
     
     // Соединяем кнопку прореживания с обработчиком
-    connect(decimationFactorButton, &QPushButton::clicked, this, &MainWindow::update3DSurfaces);
+    // connect(decimationFactorButton, &QPushButton::clicked, this, &MainWindow::update3DSurfaces); // Old connection
+    connect(decimationFactorButton, &QPushButton::clicked, this, [this]() { // New connection
+        if (params.solver_type == "Square Solver") {
+            update3DSurfacesSquare();
+        } else {
+            update3DSurfaces();
+        }
+    });
     
     // Устанавливаем начальные значения
     showSolutionCheckBox->setChecked(true);
@@ -972,7 +1166,47 @@ void MainWindow::onShowHeatmapClicked() {
     }
     
     // Создаем матрицу ошибки
-    auto errorMatrix = createErrorMatrix();
+    // auto errorMatrix = createErrorMatrix(); // <<< REMOVE THIS LINE
+    std::vector<std::vector<double>> errorMatrix; 
+    if (params.solver_type == "Square Solver") { 
+        // For square solver, we need a way to convert results_square.error to a 2D matrix
+        // This might involve knowing n_internal and m_internal for the square case
+        // For now, let's assume a similar structure or a new helper function
+        // For simplicity, if results_square.error is flat, we need to reshape it.
+        // This part needs to be implemented based on how SquareSolverResults are structured.
+        // Placeholder for error matrix generation for square solver:
+        if (!results_square.solution.empty() && params.n_internal > 0 && params.m_internal > 0 &&
+            results_square.solution.size() == static_cast<size_t>(params.n_internal * params.m_internal)) {
+            // For now, let's create a dummy error matrix for square, or disable heatmap if no error data
+            // If results_square.error is available and has the same flat structure:
+            if (!results_square.error.empty() && results_square.error.size() == results_square.solution.size()) {
+                 errorMatrix.resize(params.m_internal, std::vector<double>(params.n_internal));
+                 for (int r = 0; r < params.m_internal; ++r) {
+                    for (int c = 0; c < params.n_internal; ++c) {
+                        errorMatrix[r][c] = results_square.error[r * params.n_internal + c];
+                    }
+                }
+            } else {
+                // If no specific error data, create a matrix of zeros or NaNs for the heatmap for square
+                // This is just a placeholder to allow the heatmap to be shown without actual error data.
+                // Ideally, the heatmap for the square solver should be disabled if no error data is present.
+                qDebug() << "onShowHeatmapClicked: No specific error data for square solver. Displaying solution magnitude or zeros.";
+                errorMatrix.resize(params.m_internal, std::vector<double>(params.n_internal, 0.0));
+                // As an alternative, one could display the solution itself as a heatmap if error is not applicable
+                // for (int r = 0; r < params.m_internal; ++r) {
+                //    for (int c = 0; c < params.n_internal; ++c) {
+                //        errorMatrix[r][c] = results_square.solution[r * params.n_internal + c];
+                //    }
+                // }
+            }
+        } else {
+             qDebug() << "onShowHeatmapClicked: Cannot create error/display matrix for square solver with current data.";
+            QMessageBox::warning(this, "Тепловая карта", "Невозможно создать матрицу для тепловой карты квадратного решателя с текущими данными.");
+            return;
+        }
+    } else {
+        errorMatrix = createErrorMatrix(); // For G-Shape
+    }
     
     // Используем новый класс HeatMapGenerator для отображения тепловой карты
     heatMapGenerator->showHeatMap(errorMatrix, "Тепловая карта ошибки", 20, 20);
@@ -1099,27 +1333,141 @@ void MainWindow::createGShapedSurface(
     }
 }
 
+// <<< ADD THIS METHOD IMPLEMENTATION
+void MainWindow::update3DSurfacesSquare() {
+    if (!solveSuccessful || results_square.solution.empty()) {
+        qDebug() << "update3DSurfacesSquare: Решение не успешно или нет данных.";
+        if (graph3D) {
+            graph3D->seriesList().clear(); // Очищаем все предыдущие серии
+        }
+        return;
+    }
+
+    if (results_square.x_coords.empty() || results_square.y_coords.empty() ||
+        results_square.x_coords.size() != results_square.solution.size() ||
+        results_square.y_coords.size() != results_square.solution.size()) {
+        qDebug() << "update3DSurfacesSquare: Отсутствуют или несогласованы данные решения/координат.";
+        if (graph3D) {
+            graph3D->seriesList().clear();
+        }
+        return;
+    }
+
+    if (!graph3D) {
+        qDebug() << "update3DSurfacesSquare: graph3D не инициализирован.";
+        return;
+    }
+
+    graph3D->seriesList().clear(); // Очищаем все предыдущие серии
+
+    QSurfaceDataArray *dataArray = new QSurfaceDataArray;
+    QSurfaceDataRow *dataRow;
+
+    // Предполагается, что solution - это плоский вектор, а x_coords и y_coords
+    // содержат соответствующие координаты для каждой точки решения.
+    // Нам нужно преобразовать это в структуру сетки для QSurface3DSeries.
+
+    // Сначала найдем уникальные отсортированные X и Y координаты
+    std::vector<double> unique_x = results_square.x_coords;
+    std::sort(unique_x.begin(), unique_x.end());
+    unique_x.erase(std::unique(unique_x.begin(), unique_x.end()), unique_x.end());
+
+    std::vector<double> unique_y = results_square.y_coords;
+    std::sort(unique_y.begin(), unique_y.end());
+    unique_y.erase(std::unique(unique_y.begin(), unique_y.end()), unique_y.end());
+
+    // Создаем карту для быстрого поиска индекса решения по (x, y)
+    std::map<std::pair<double, double>, double> solution_map;
+    for (size_t i = 0; i < results_square.solution.size(); ++i) {
+        // Используем некую точность для сравнения координат, если они могут быть неточными
+        double rounded_x = std::round(results_square.x_coords[i] * 1e6) / 1e6;
+        double rounded_y = std::round(results_square.y_coords[i] * 1e6) / 1e6;
+        solution_map[{rounded_x, rounded_y}] = results_square.solution[i];
+    }
+
+    // Заполняем QSurfaceDataArray
+    // Итерация по Y координатам (которые будут рядами на графике)
+    for (double y_val : unique_y) {
+        dataRow = new QSurfaceDataRow;
+        // Итерация по X координатам (которые будут точками в ряду)
+        for (double x_val : unique_x) {
+            double sol_val = 0.0; // Значение по умолчанию, если точка не найдена
+            double rounded_x_lookup = std::round(x_val * 1e6) / 1e6;
+            double rounded_y_lookup = std::round(y_val * 1e6) / 1e6;
+            auto it = solution_map.find({rounded_x_lookup, rounded_y_lookup});
+            if (it != solution_map.end()) {
+                sol_val = it->second;
+            }
+            // Для QSurface3DSeries: X это x_val, Y это sol_val, Z это y_val
+            *dataRow << QVector3D(static_cast<float>(x_val), static_cast<float>(sol_val), static_cast<float>(y_val));
+        }
+        *dataArray << dataRow;
+    }
+
+    QSurface3DSeries *series = new QSurface3DSeries;
+    series->dataProxy()->resetArray(dataArray);
+    series->setDrawMode(QSurface3DSeries::DrawSurfaceAndWireframe);
+    series->setFlatShadingEnabled(true);
+
+    graph3D->addSeries(series);
+
+    // Устанавливаем диапазоны осей на основе фактических данных или параметров задачи
+    graph3D->axisX()->setRange(static_cast<float>(params.a_bound), static_cast<float>(params.b_bound));
+    graph3D->axisZ()->setRange(static_cast<float>(params.c_bound), static_cast<float>(params.d_bound));
+    // Диапазон оси Y (значение решения) может быть установлен автоматически или вычислен
+    // graph3D->axisY()->setAutoAdjustRange(true);
+
+    // Настройка внешнего вида, если необходимо
+    graph3D->setTitle("Численное решение (Квадратная область)");
+    showSolutionCheckBox->setChecked(true); // Показываем численное решение
+    showSolutionCheckBox->setEnabled(true);
+    showTrueSolutionCheckBox->setChecked(false); // Нет точного решения для этой задачи
+    showTrueSolutionCheckBox->setEnabled(false);
+    showErrorCheckBox->setChecked(false); // Нет ошибки без точного решения
+    showErrorCheckBox->setEnabled(false);
+
+    // Управление видимостью для квадратного решателя (упрощенное)
+    disconnect(showSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onSolutionSeriesVisibilityChanged);
+    connect(showSolutionCheckBox, &QCheckBox::toggled, this, [this, series](bool visible){
+        if (series) series->setVisible(visible);
+    });
+    // Для showTrueSolutionCheckBox и showErrorCheckBox обработчики не нужны, т.к. они отключены
+
+    qDebug() << "update3DSurfacesSquare: Поверхность для квадратной области обновлена.";
+}
+
 // Методы для управления видимостью поверхностей
 void MainWindow::setNumericalSolutionVisible(bool visible) {
-    if (gshapeRegion) {
-        gshapeRegion->setNumericalSolutionVisible(visible);
+    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+        if (graph3D && !graph3D->seriesList().isEmpty()) {
+            graph3D->seriesList().at(0)->setVisible(visible);
+        }
+    } else {
+        if (gshapeRegion) {
+            gshapeRegion->setNumericalSolutionVisible(visible);
+        }
     }
 }
 
 void MainWindow::setTrueSolutionVisible(bool visible) {
-    if (gshapeRegion) {
-        gshapeRegion->setTrueSolutionVisible(visible);
+    if (params.solver_type == "G-Shape Solver") { // <<< MODIFIED THIS LINE (was: if (gshapeRegion))
+        if (gshapeRegion) { // <<< ADD THIS CHECK
+            gshapeRegion->setTrueSolutionVisible(visible);
+        }
     }
+    // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
 }
 
 void MainWindow::setErrorSurfaceVisible(bool visible) {
-    if (gshapeRegion) {
-        gshapeRegion->setErrorSurfaceVisible(visible);
+    if (params.solver_type == "G-Shape Solver") { // <<< MODIFIED THIS LINE (was: if (gshapeRegion))
+         if (gshapeRegion) { // <<< ADD THIS CHECK
+            gshapeRegion->setErrorSurfaceVisible(visible);
+        }
     }
+    // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
 }
 
 // Stub implementations for missing functions
-
 void MainWindow::onSaveResultsButtonClicked() {
     qDebug() << "onSaveResultsButtonClicked called - not implemented yet.";
     // TODO: Implement saving results functionality
@@ -1179,28 +1527,35 @@ std::vector<std::vector<double>> MainWindow::solutionTo2D() {
     std::vector<std::vector<double>> matrix;
 
     if (params.n_internal <= 0 || params.m_internal <= 0) {
-        qDebug() << "solutionTo2D: Invalid dimensions (n_internal or m_internal <= 0).";
+        qDebug() << "solutionTo2D: Invalid dimensions (n_internal or m_internal <= 0)."; // <<< MODIFIED THIS LINE
         return matrix; // Return empty matrix
     }
 
     matrix.resize(params.m_internal, std::vector<double>(params.n_internal));
 
-    if (solveSuccessful && !results.solution.empty()) {
-        if (results.solution.size() == static_cast<size_t>(params.n_internal * params.m_internal)) {
+    const std::vector<double>* sol_ptr = nullptr; // <<< ADD THIS LINE
+    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+        sol_ptr = &results_square.solution;
+    } else {
+        sol_ptr = &results.solution;
+    }
+
+    if (solveSuccessful && sol_ptr && !sol_ptr->empty()) { // <<< MODIFIED THIS LINE
+        if (sol_ptr->size() == static_cast<size_t>(params.n_internal * params.m_internal)) { // <<< MODIFIED THIS LINE
             for (int r = 0; r < params.m_internal; ++r) {
                 for (int c = 0; c < params.n_internal; ++c) {
-                    matrix[r][c] = results.solution[r * params.n_internal + c];
+                    matrix[r][c] = (*sol_ptr)[r * params.n_internal + c]; // <<< MODIFIED THIS LINE
                 }
             }
-            qDebug() << "solutionTo2D: Successfully reshaped results.solution.";
+            qDebug() << "solutionTo2D: Successfully reshaped solution for type: " << params.solver_type; // <<< MODIFIED THIS LINE
         } else {
-            qDebug() << "solutionTo2D: Size mismatch between results.solution and n_internal*m_internal. Filling with NaN.";
+            qDebug() << "solutionTo2D: Size mismatch for solver type " << params.solver_type << ". Filling with NaN."; // <<< MODIFIED THIS LINE
             for (int r = 0; r < params.m_internal; ++r) {
                 std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
             }
         }
     } else {
-        qDebug() << "solutionTo2D: No solution available or solution is empty. Filling with NaN.";
+        qDebug() << "solutionTo2D: No solution available or solution is empty for type " << params.solver_type << ". Filling with NaN."; // <<< MODIFIED THIS LINE
         for (int r = 0; r < params.m_internal; ++r) {
             std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
         }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(DirichletSolverProject VERSION 1.0.0 LANGUAGES CXX)
+project(DirichletSolverProject2 VERSION 1.0.0 LANGUAGES CXX)
 
 # Установка глобальных параметров CMake
 set(CMAKE_CXX_STANDARD 17)
@@ -28,7 +28,7 @@ if(BUILD_QT_GUI)
 endif()
 
 # Вывод сообщения для пользователя
-message(STATUS "DirichletSolverProject configuration completed")
+message(STATUS "DirichletSolverProject2 configuration completed")
 message(STATUS "  - Solver library will be built")
 if(BUILD_QT_GUI AND Qt6_FOUND)
     message(STATUS "  - Qt GUI application will be built")
