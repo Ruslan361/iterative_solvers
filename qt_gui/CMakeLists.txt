@@ -25,6 +25,8 @@ set(GUI_SOURCES
     src/mainwindow.cpp
     src/gshaperegion.cpp
     src/heatmapgenerator.cpp
+    src/shaperegion.cpp
+    src/squareshaperegion.cpp
 )
 
 # Заголовочные файлы GUI
@@ -32,6 +34,8 @@ set(GUI_HEADERS
     src/mainwindow.h
     src/gshaperegion.h
     src/heatmapgenerator.h
+    src/shaperegion.h
+    src/squareshaperegion.h
 )
 
 # UI файлы для Qt Designer

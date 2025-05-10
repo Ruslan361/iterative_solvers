@@ -22,13 +22,15 @@
 // Подключаем заголовки решателя
 #include "dirichlet_solver.hpp"
 #include "grid_system.h"
-#include "dirichlet_solver_square.hpp" // <<< ADD THIS INCLUDE
+#include "dirichlet_solver_square.hpp"
 
 // Подключаем модуль 3D-визуализации Qt
 #include <QtDataVisualization/QtDataVisualization>
 
 // Подключаем классы для визуализации
+#include "shaperegion.h"
 #include "gshaperegion.h"
+#include "squareshaperegion.h"
 #include "heatmapgenerator.h"
 
 
@@ -42,26 +44,26 @@ class SolverWorker : public QObject {
 
 public:
     explicit SolverWorker(std::unique_ptr<DirichletSolver> solver);
-    explicit SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq); // <<< ADD THIS CONSTRUCTOR
+    explicit SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq);
     ~SolverWorker() = default;
     
     // Getter метод для доступа к solver
     DirichletSolver* getSolver() { return solver.get(); }
-    DirichletSolverSquare* getSolverSquare() { return solver_sq.get(); } // <<< ADD THIS GETTER
+    DirichletSolverSquare* getSolverSquare() { return solver_sq.get(); }
 
 public slots:
     void process();
 
 signals:
     void resultReady(SolverResults results);
-    void resultReadySquare(SquareSolverResults results); // <<< ADD THIS SIGNAL
+    void resultReadySquare(SquareSolverResults results);
     void finished();
     void iterationUpdate(int iteration, double precision, double residual, double error);
 
 private:
     std::unique_ptr<DirichletSolver> solver;
-    std::unique_ptr<DirichletSolverSquare> solver_sq; // <<< ADD THIS MEMBER
-    bool is_square_solver = false; // <<< ADD THIS MEMBER
+    std::unique_ptr<DirichletSolverSquare> solver_sq;
+    bool is_square_solver = false;
 };
 
 class MainWindow : public QMainWindow
@@ -72,18 +74,17 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
     
-    // Метод для создания и отображения Г-образной поверхности
-    void createGShapedSurface();
+    // Метод для создания и отображения поверхности в соответствии с областью
+    void createSurfaceForDomain();
     
-    // Расширенный метод для создания Г-образной поверхности
-    void createGShapedSurface(
+    // Расширенный метод для создания поверхности в соответствии с областью
+    void createSurfaceForDomain(
         const std::vector<double>& numericalSolution,
         const std::vector<double>& trueSolution,
         const std::vector<double>& errorValues,
         const std::vector<double>& xCoords,
         const std::vector<double>& yCoords,
-        int decimationFactor,
-        int connectorRows
+        int decimationFactor
     );
     
 public slots:
@@ -96,7 +97,7 @@ private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
     void handleResults(SolverResults results);
-    void handleResultsSquare(SquareSolverResults results); // <<< ADD THIS SLOT
+    void handleResultsSquare(SquareSolverResults results);
     void updateIterationInfo(int iteration, double precision, double residual, double error);
     void onSolverFinished();
     void onSaveResultsButtonClicked();
@@ -118,11 +119,11 @@ private:
     
     // Объект решателя
     std::unique_ptr<DirichletSolver> solver;
-    std::unique_ptr<DirichletSolverSquare> solver_square; // <<< ADD THIS MEMBER
+    std::unique_ptr<DirichletSolverSquare> solver_square;
     
     // Результаты решения
     SolverResults results;
-    SquareSolverResults results_square; // <<< ADD THIS MEMBER
+    SquareSolverResults results_square;
     
     // Поток для решателя
     QThread* solverThread = nullptr;
@@ -181,7 +182,7 @@ private:
         bool use_residual;
         bool use_exact_error;
         bool use_max_iterations;
-        QString solver_type; // <<< ADD THIS MEMBER
+        QString solver_type;
     } params;
     
     // Метод для очистки потока после завершения
@@ -190,14 +191,14 @@ private:
     // Методы для 3D визуализации
     void setup3DVisualization();
     void update3DSurfaces();
-    void update3DSurfacesSquare(); // <<< ADD THIS DECLARATION
+    void update3DSurfacesSquare();
     
     // 3D визуализация объекты
     QWidget* visualization3DTab;
     Q3DSurface* graph3D;
     
-    // Класс для управления Г-образной областью
-    std::unique_ptr<GShapeRegion> gshapeRegion;
+    // Класс для управления областью (полиморфно)
+    std::unique_ptr<ShapeRegion> shapeRegion;
     
     // Класс для генерации тепловых карт
     std::unique_ptr<HeatMapGenerator> heatMapGenerator;
@@ -205,9 +206,9 @@ private:
     QCheckBox *showSolutionCheckBox;
     QCheckBox *showTrueSolutionCheckBox;
     QCheckBox *showErrorCheckBox;
-    QPushButton *showHeatMapButton; // Moved declaration here
-    QSpinBox *decimationFactorSpinBox; // Moved declaration here
-    QPushButton *decimationFactorButton; // Moved declaration here
+    QPushButton *showHeatMapButton;
+    QSpinBox *decimationFactorSpinBox;
+    QPushButton *decimationFactorButton;
 
 
     // UI elements for 2D chart slicing

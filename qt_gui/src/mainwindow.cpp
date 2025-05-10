@@ -513,33 +513,75 @@ void MainWindow::onSolverFinished() {
         ui->saveVisualizationButton->setEnabled(true);
         ui->showReportButton->setEnabled(true);
         
-        // Создаем новый экземпляр решателя для использования в последующих операциях
-        // setupSolver(); // <<< This might not be needed or might need adjustment based on solver type
-        
         // Отображаем решение
-        if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
-            // For square solver, we might need a different updateChart or adapt existing one
-            // For now, let's assume updateChart can handle results_square.solution
-            // or that we've mapped it to results.solution in handleResultsSquare
-            updateChart(results_square.solution);
-            update3DSurfacesSquare(); // <<< CALL NEW METHOD FOR SQUARE SOLVER
-            // Disable G-shape specific controls
-            if (gshapeRegion) { 
-                gshapeRegion->clearAllSurfaces(); 
+        if (params.solver_type == "Square Solver") {
+            // Create the appropriate shape region if it doesn't exist or is of the wrong type
+            if (!shapeRegion || !dynamic_cast<SquareShapeRegion*>(shapeRegion.get())) {
+                shapeRegion = std::make_unique<SquareShapeRegion>(graph3D);
             }
-            showHeatMapButton->setEnabled(true); // Enable heatmap for square too (will need adaptation)
-            decimationFactorSpinBox->setEnabled(false); // Decimation might not be relevant for square
-            decimationFactorButton->setEnabled(false);
-            showTrueSolutionCheckBox->setEnabled(false); // No true solution for this custom square problem
-            showErrorCheckBox->setEnabled(false);      // No error surface if no true solution
-
-        } else {
-            updateChart(results.solution);
-            update3DSurfaces(); // This is for G-shape
+            
+            // For square solver
+            updateChart(results_square.solution);
+            
+            // Update the 3D visualization with SquareShapeRegion
+            int decimationFactor = decimationFactorSpinBox ? decimationFactorSpinBox->value() : 1;
+            
+            shapeRegion->createSurfaces(
+                results_square.solution,
+                results_square.true_solution,
+                results_square.error,
+                results_square.x_coords,
+                results_square.y_coords,
+                params.a_bound, params.b_bound,
+                params.c_bound, params.d_bound,
+                decimationFactor
+            );
+            
+            // Configure UI controls for square region
+            showSolutionCheckBox->setChecked(true);
+            showSolutionCheckBox->setEnabled(true);
+            showTrueSolutionCheckBox->setChecked(false);
+            showTrueSolutionCheckBox->setEnabled(!results_square.true_solution.empty());
+            showErrorCheckBox->setChecked(false);
+            showErrorCheckBox->setEnabled(!results_square.error.empty());
+            
+            showHeatMapButton->setEnabled(true);
             decimationFactorSpinBox->setEnabled(true);
             decimationFactorButton->setEnabled(true);
+        } else {
+            // Create the appropriate shape region if it doesn't exist or is of the wrong type
+            if (!shapeRegion || !dynamic_cast<GShapeRegion*>(shapeRegion.get())) {
+                shapeRegion = std::make_unique<GShapeRegion>(graph3D);
+            }
+            
+            // For G-shape solver
+            updateChart(results.solution);
+            
+            // Update the 3D visualization with GShapeRegion
+            int decimationFactor = decimationFactorSpinBox ? decimationFactorSpinBox->value() : 1;
+            
+            shapeRegion->createSurfaces(
+                results.solution,
+                results.true_solution,
+                results.error,
+                results.x_coords,
+                results.y_coords,
+                params.a_bound, params.b_bound,
+                params.c_bound, params.d_bound,
+                decimationFactor
+            );
+            
+            // Configure UI controls for G-shape region
+            showSolutionCheckBox->setChecked(true);
+            showSolutionCheckBox->setEnabled(true);
+            showTrueSolutionCheckBox->setChecked(false);
             showTrueSolutionCheckBox->setEnabled(true);
+            showErrorCheckBox->setChecked(false);
             showErrorCheckBox->setEnabled(true);
+            
+            showHeatMapButton->setEnabled(true);
+            decimationFactorSpinBox->setEnabled(true);
+            decimationFactorButton->setEnabled(true);
         }
         
         // Переходим на вкладку с графиком
@@ -935,9 +977,6 @@ void MainWindow::setup3DVisualization() {
     graph3D->setHorizontalAspectRatio(1.0);
     graph3D->setShadowQuality(QAbstract3DGraph::ShadowQualityMedium);
     
-    // Инициализируем объект GShapeRegion
-    gshapeRegion = std::make_unique<GShapeRegion>(graph3D);
-    
     // Создаем элементы управления
     QGroupBox *controlsGroupBox = new QGroupBox("Управление визуализацией");
     QVBoxLayout *controlsLayout = new QVBoxLayout(controlsGroupBox);
@@ -963,8 +1002,7 @@ void MainWindow::setup3DVisualization() {
     decimationLayout->addWidget(decimationFactorButton);
     
     // Соединяем кнопку прореживания с обработчиком
-    // connect(decimationFactorButton, &QPushButton::clicked, this, &MainWindow::update3DSurfaces); // Old connection
-    connect(decimationFactorButton, &QPushButton::clicked, this, [this]() { // New connection
+    connect(decimationFactorButton, &QPushButton::clicked, this, [this]() {
         if (params.solver_type == "Square Solver") {
             update3DSurfacesSquare();
         } else {
@@ -1086,8 +1124,8 @@ void MainWindow::update3DSurfaces() {
         if (!solveSuccessful) {
             qDebug() << "update3DSurfaces: Решение не успешно.";
             // Очищаем серии, чтобы избежать отображения устаревших данных
-            if (gshapeRegion) {
-                gshapeRegion->clearAllSurfaces();
+            if (shapeRegion) {
+                shapeRegion->clearAllSurfaces();
             }
             showHeatMapButton->setEnabled(false);
             return;
@@ -1098,8 +1136,8 @@ void MainWindow::update3DSurfaces() {
             results.x_coords.size() != results.solution.size() || 
             results.y_coords.size() != results.solution.size()) {
             qDebug() << "update3DSurfaces: Отсутствуют или несогласованы данные решения/координат.";
-            if (gshapeRegion) {
-                gshapeRegion->clearAllSurfaces();
+            if (shapeRegion) {
+                shapeRegion->clearAllSurfaces();
             }
             showHeatMapButton->setEnabled(false);
             return;
@@ -1109,8 +1147,8 @@ void MainWindow::update3DSurfaces() {
         for (size_t i = 0; i < results.solution.size(); ++i) {
             if (std::isnan(results.solution[i]) || std::isinf(results.solution[i])) {
                 qDebug() << "update3DSurfaces: Найдены некорректные значения в решении";
-                if (gshapeRegion) {
-                    gshapeRegion->clearAllSurfaces();
+                if (shapeRegion) {
+                    shapeRegion->clearAllSurfaces();
                 }
                 showHeatMapButton->setEnabled(false);
                 return;
@@ -1123,30 +1161,40 @@ void MainWindow::update3DSurfaces() {
             decimationFactor = std::max(1, decimationFactorSpinBox->value());
         }
 
-        // Используем новый метод для создания Г-образной поверхности
-        createGShapedSurface(
-            results.solution,        // Численное решение
-            results.true_solution,   // Точное решение
-            results.error,           // Ошибка
-            results.x_coords,        // X координаты
-            results.y_coords,        // Y координаты
-            decimationFactor,        // Коэффициент прореживания
-            5                        // Количество строк для перемычки
-        );
-
-        // Делаем видимым только численное решение по умолчанию
-        setNumericalSolutionVisible(true);
-        setTrueSolutionVisible(false);
-        setErrorSurfaceVisible(false);
-
         // Обновляем состояние элементов управления
         if (showSolutionCheckBox) showSolutionCheckBox->setChecked(true);
         if (showTrueSolutionCheckBox) showTrueSolutionCheckBox->setChecked(false);
         if (showErrorCheckBox) showErrorCheckBox->setChecked(false);
         showHeatMapButton->setEnabled(true);
 
-        // Обновляем заголовок
-        graph3D->setTitle("Численное решение на Г-образной области");
+        // Создаем новую G-образную область и отображаем данные
+        if (!shapeRegion || !dynamic_cast<GShapeRegion*>(shapeRegion.get())) {
+            shapeRegion = std::make_unique<GShapeRegion>(graph3D);
+        }
+
+        bool success = shapeRegion->createSurfaces(
+            results.solution,
+            results.true_solution,
+            results.error,
+            results.x_coords,
+            results.y_coords,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound,
+            decimationFactor
+        );
+
+        if (success) {
+            // Делаем видимым только численное решение по умолчанию
+            setNumericalSolutionVisible(true);
+            setTrueSolutionVisible(false);
+            setErrorSurfaceVisible(false);
+
+            // Обновляем заголовок
+            graph3D->setTitle("Численное решение на Г-образной области");
+        } else {
+            qDebug() << "update3DSurfaces: Не удалось создать поверхности";
+            QMessageBox::warning(this, "Предупреждение", "Не удалось создать Г-образную поверхность");
+        }
     } catch (const std::exception& e) {
         qDebug() << "ОШИБКА в update3DSurfaces: " << e.what();
         QMessageBox::critical(this, "Ошибка при обновлении 3D поверхности", 
@@ -1172,8 +1220,6 @@ void MainWindow::onShowHeatmapClicked() {
         // For square solver, we need a way to convert results_square.error to a 2D matrix
         // This might involve knowing n_internal and m_internal for the square case
         // For now, let's assume a similar structure or a new helper function
-        // For simplicity, if results_square.error is flat, we need to reshape it.
-        // This part needs to be implemented based on how SquareSolverResults are structured.
         // Placeholder for error matrix generation for square solver:
         if (!results_square.solution.empty() && params.n_internal > 0 && params.m_internal > 0 &&
             results_square.solution.size() == static_cast<size_t>(params.n_internal * params.m_internal)) {
@@ -1212,126 +1258,7 @@ void MainWindow::onShowHeatmapClicked() {
     heatMapGenerator->showHeatMap(errorMatrix, "Тепловая карта ошибки", 20, 20);
 }
 
-// Метод для создания Г-образной поверхности (для вызова из UI)
-void MainWindow::createGShapedSurface() {
-    if (!solveSuccessful || results.solution.empty()) {
-        qDebug() << "createGShapedSurface: Нет данных для отображения";
-        return;
-    }
-    
-    // Получаем коэффициент прореживания из спинбокса
-    int decimationFactor = decimationFactorSpinBox ? decimationFactorSpinBox->value() : 1;
-    
-    // Используем полную версию метода с параметрами
-    createGShapedSurface(
-        results.solution,
-        results.true_solution,
-        results.error,
-        results.x_coords,
-        results.y_coords,
-        decimationFactor,
-        5 // Стандартное количество строк для перемычки
-    );
-}
 
-// Метод для создания Г-образной поверхности с использованием нового класса GShapeRegion
-void MainWindow::createGShapedSurface(
-    const std::vector<double>& numericalSolution,
-    const std::vector<double>& trueSolution,
-    const std::vector<double>& errorValues,
-    const std::vector<double>& xCoords,
-    const std::vector<double>& yCoords,
-    int decimationFactor,
-    int connectorRows)
-{
-    try {
-        if (!gshapeRegion || !graph3D) {
-            qDebug() << "createGShapedSurface: нет объекта GShapeRegion или объекта graph3D";
-            return;
-        }
-
-        if (numericalSolution.empty() || xCoords.empty() || yCoords.empty()) {
-            qDebug() << "createGShapedSurface: отсутствуют исходные данные";
-            return;
-        }
-
-        // Проверяем и очищаем данные от некорректных значений
-        for (size_t i = 0; i < numericalSolution.size(); ++i) {
-            if (std::isnan(numericalSolution[i]) || std::isinf(numericalSolution[i])) {
-                qDebug() << "createGShapedSurface: Обнаружены некорректные значения в решении";
-                QMessageBox::warning(this, "Предупреждение", 
-                    "Некорректные значения в данных (NaN или бесконечность). Визуализация может быть некорректной.");
-                break;
-            }
-        }
-
-        // Используем указанный коэффициент прореживания или берем из интерфейса
-        if (decimationFactor <= 0 && decimationFactorSpinBox) {
-            decimationFactor = std::max(1, decimationFactorSpinBox->value());
-        } else {
-            decimationFactor = std::max(1, decimationFactor);
-        }
-        
-        qDebug() << "createGShapedSurface: Создание поверхностей с коэффициентом прореживания = " << decimationFactor;
-
-        // Создаем поверхности с помощью нового класса GShapeRegion
-        bool success = false;
-        
-        // Оборачиваем вызов createSurfaces в отдельный try-catch для диагностики
-        try {
-            success = gshapeRegion->createSurfaces(
-                numericalSolution,
-                trueSolution,
-                errorValues,
-                xCoords,
-                yCoords,
-                params.a_bound,     // domainXMin
-                params.b_bound,     // domainXMax
-                params.c_bound,     // domainYMin
-                params.d_bound,     // domainYMax
-                decimationFactor,
-                connectorRows
-            );
-        } catch (const std::exception& e) {
-            qDebug() << "ОШИБКА при вызове gshapeRegion->createSurfaces: " << e.what();
-            QMessageBox::critical(this, "Ошибка создания поверхностей", 
-                QString("Произошла ошибка при создании поверхностей: %1").arg(e.what()));
-            return;
-        } catch (...) {
-            qDebug() << "НЕИЗВЕСТНАЯ ОШИБКА при вызове gshapeRegion->createSurfaces";
-            QMessageBox::critical(this, "Критическая ошибка", 
-                "Произошла неизвестная ошибка при создании поверхностей");
-            return;
-        }
-
-        if (success) {
-            // Обновляем состояние элементов управления
-            decimationFactorButton->setEnabled(true);
-            showHeatMapButton->setEnabled(!errorValues.empty());
-
-            // Устанавливаем видимость поверхностей согласно состоянию элементов управления
-            gshapeRegion->setNumericalSolutionVisible(showSolutionCheckBox->isChecked());
-            gshapeRegion->setTrueSolutionVisible(showTrueSolutionCheckBox->isChecked());
-            gshapeRegion->setErrorSurfaceVisible(showErrorCheckBox->isChecked());
-
-            // Обновляем заголовок графика
-            graph3D->setTitle("Г-образная поверхность решения");
-            
-            qDebug() << "createGShapedSurface: Поверхности успешно созданы";
-        } else {
-            qDebug() << "createGShapedSurface: Не удалось создать поверхности";
-            QMessageBox::warning(this, "Предупреждение", "Не удалось создать Г-образную поверхность");
-        }
-    } catch (const std::exception& e) {
-        qDebug() << "ОШИБКА в createGShapedSurface: " << e.what();
-        QMessageBox::critical(this, "Ошибка при создании 3D поверхности", 
-                            QString("Произошла ошибка: %1").arg(e.what()));
-    } catch (...) {
-        qDebug() << "НЕИЗВЕСТНАЯ ОШИБКА в createGShapedSurface!";
-        QMessageBox::critical(this, "Критическая ошибка", 
-                            "Произошла неизвестная ошибка при создании 3D поверхности");
-    }
-}
 
 // <<< ADD THIS METHOD IMPLEMENTATION
 void MainWindow::update3DSurfacesSquare() {
@@ -1438,30 +1365,30 @@ void MainWindow::update3DSurfacesSquare() {
 
 // Методы для управления видимостью поверхностей
 void MainWindow::setNumericalSolutionVisible(bool visible) {
-    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+    if (params.solver_type == "Square Solver") {
         if (graph3D && !graph3D->seriesList().isEmpty()) {
             graph3D->seriesList().at(0)->setVisible(visible);
         }
     } else {
-        if (gshapeRegion) {
-            gshapeRegion->setNumericalSolutionVisible(visible);
+        if (shapeRegion) {
+            shapeRegion->setNumericalSolutionVisible(visible);
         }
     }
 }
 
 void MainWindow::setTrueSolutionVisible(bool visible) {
-    if (params.solver_type == "G-Shape Solver") { // <<< MODIFIED THIS LINE (was: if (gshapeRegion))
-        if (gshapeRegion) { // <<< ADD THIS CHECK
-            gshapeRegion->setTrueSolutionVisible(visible);
+    if (params.solver_type == "G-Shape Solver") {
+        if (shapeRegion) {
+            shapeRegion->setTrueSolutionVisible(visible);
         }
     }
     // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
 }
 
 void MainWindow::setErrorSurfaceVisible(bool visible) {
-    if (params.solver_type == "G-Shape Solver") { // <<< MODIFIED THIS LINE (was: if (gshapeRegion))
-         if (gshapeRegion) { // <<< ADD THIS CHECK
-            gshapeRegion->setErrorSurfaceVisible(visible);
+    if (params.solver_type == "G-Shape Solver") {
+        if (shapeRegion) {
+            shapeRegion->setErrorSurfaceVisible(visible);
         }
     }
     // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
@@ -1475,7 +1402,7 @@ void MainWindow::onSaveResultsButtonClicked() {
 }
 
 void MainWindow::onSaveMatrixButtonClicked() {
-    qDebug() << "onSaveMatrixButtonClicked called - not implemented yet.";
+       qDebug() << "onSaveMatrixButtonClicked called - not implemented yet.";
     // TODO: Implement saving matrix functionality
     QMessageBox::information(this, "Not Implemented", "Saving matrix is not yet implemented.");
 }
