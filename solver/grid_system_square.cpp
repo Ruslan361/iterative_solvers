@@ -56,7 +56,8 @@ bool GridSystemSquare::is_boundary(int x, int y) const {
 double GridSystemSquare::calculate_value(int x, int y, double x_k, double y_k) {
     double x_pos = calculate_x(x);
     double y_pos = calculate_y(y);
-    double value = function(x_pos, y_pos);
+    // ИСПРАВЛЕНИЕ: Меняем знак у функции источника при формировании правой части
+    double value = -function(x_pos, y_pos); 
     
     // Учитываем граничные условия Дирихле, если соседняя точка находится на границе
     if (is_left_boundary(x - 1, y)) {
