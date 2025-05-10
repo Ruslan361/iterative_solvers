@@ -221,7 +221,7 @@ KokkosVector MSGSolver::solve() {
                 z(i) = r(i) + beta * z(i); // z_{k+1} = r_{k+1} + beta * z_k
             });
             
-            if (iteration_callback || (iterationsDone % 100 == 0 || iterationsDone == 1)) {
+            if (iteration_callback && (iterationsDone % 100 == 0 || iterationsDone == 1)) {
                  if (iterationsDone % 100 == 0 || iterationsDone == 1) { // Console output condition
                     std::cout << "Итерация: " << iterationsDone << "\n";
                     if (need_precision_norm_check) {

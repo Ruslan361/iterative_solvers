@@ -287,7 +287,8 @@ GridSystemSquare::GridSystemSquare(int m, int n, double a, double b, double c, d
 GridSystemSquare::GridSystemSquare(int m, int n, double a, double b, double c, double d,
                                  double (*f)(double, double),
                                  double (*mu1)(double, double), double (*mu2)(double, double),
-                                 double (*mu3)(double, double), double (*mu4)(double, double)) {
+                                 double (*mu3)(double, double), double (*mu4)(double, double),
+                                 double (*exact_sol_func)(double, double)) { // Added exact_sol_func
     // Инициализация Kokkos, если еще не инициализирована
     if (!Kokkos::is_initialized()) {
         Kokkos::initialize();
@@ -309,7 +310,7 @@ GridSystemSquare::GridSystemSquare(int m, int n, double a, double b, double c, d
     
     // Установка указателей на функции
     this->funcPtr = f;
-    this->solPtr = nullptr;  // Точное решение неизвестно
+    this->solPtr = exact_sol_func;  // Use the passed exact_sol_func
     
     // Устанавливаем граничные условия
     this->mu1Ptr = mu1;

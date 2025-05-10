@@ -91,12 +91,10 @@ DirichletSolverSquare::DirichletSolverSquare(int n, int m, double a, double b, d
         this->mu4 = mu4_square;
     }
     
-    // Инициализация сетки с функцией правой части и граничными условиями
-    // (GridSystemSquare не имеет конструктора, принимающего exact_solution)
+    // Инициализация сетки с функцией правой части, граничными условиями и функцией точного решения
     grid = std::make_unique<GridSystemSquare>(m_internal, n_internal, a_bound, b_bound, c_bound, d_bound,
-                                           this->func, this->mu1, this->mu2, this->mu3, this->mu4);
-    
-    // Храним exact_solution в классе DirichletSolverSquare, но не передаем его в GridSystemSquare
+                                           this->func, this->mu1, this->mu2, this->mu3, this->mu4,
+                                           this->exact_solution); // Pass the exact solution function pointer
 }
 
 // Конструктор с указанием функций правой части и явных граничных условий

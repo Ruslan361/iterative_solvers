@@ -1,4 +1,4 @@
- #pragma once
+#pragma once
 
 #include <QMainWindow>
 #include <QtCharts>
@@ -23,6 +23,9 @@
 #include "dirichlet_solver.hpp"
 #include "grid_system.h"
 #include "dirichlet_solver_square.hpp"
+#include "solver.hpp"
+#include "dirichlet_solver_square.hpp" // Для SquareSolverResults
+#include "dirichlet_solver.hpp"      // Для SolverResults
 
 // Подключаем модуль 3D-визуализации Qt
 #include <QtDataVisualization/QtDataVisualization>
@@ -96,23 +99,23 @@ public slots:
 private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
-    void handleResults(SolverResults results);
-    void handleResultsSquare(SquareSolverResults results);
-    void updateIterationInfo(int iteration, double precision, double residual, double error);
+    void handleResults(const SolverResults& results);
+    void handleResultsSquare(const SquareSolverResults& results_sq);
+    void updateIterationInfo(int iter, double res_norm, double err_norm, double prec_norm);
     void onSolverFinished();
     void onSaveResultsButtonClicked();
     void onSaveMatrixButtonClicked();
     void onSaveVisualizationButtonClicked();
     void onShowReportButtonClicked();
-    void onShowHeatmapClicked();
+    void onShowHeatMapClicked(); // Добавлено объявление для функции с большой буквой M
     void onSolutionSeriesVisibilityChanged(bool visible);
     void onTrueSolutionSeriesVisibilityChanged(bool visible);
     void onErrorSeriesVisibilityChanged(bool visible);
-
-    // Slots for 2D chart slicing
-    void onSliceAxisChanged(int index);
+    void onChartTypeChanged(int index);
+    void onSliceAxisChanged(int axis);
     void onSliceIndexChanged(int value);
-
+    void onTabChanged(int index);      // Слот для смены вкладок
+    void createOrUpdate3DSurfaces(); // Слот для создания/обновления поверхностей
 
 private:
     Ui::MainWindow *ui;
@@ -209,7 +212,9 @@ private:
     QPushButton *showHeatMapButton;
     QSpinBox *decimationFactorSpinBox;
     QPushButton *decimationFactorButton;
-
+    
+    // Индекс вкладки 3D визуализации
+    static const int vizTabIndex = 3; // Индекс вкладки 3D визуализации (третья вкладка)
 
     // UI elements for 2D chart slicing
     QLabel *sliceAxisLabel;

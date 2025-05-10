@@ -57,6 +57,23 @@ public:
                     int cellWidth = 20,
                     int cellHeight = 20);
 
+    /**
+     * @brief Создать и отобразить тепловую карту из одномерных массивов
+     * @param values Значения для отображения
+     * @param xCoords X-координаты точек
+     * @param yCoords Y-координаты точек
+     * @param xMin Минимальная x-координата области
+     * @param xMax Максимальная x-координата области
+     * @param yMin Минимальная y-координата области
+     * @param yMax Максимальная y-координата области
+     * @param resolution Разрешение сетки (по умолчанию 100x100)
+     */
+    void generateAndShow(const std::vector<double>& values,
+                          const std::vector<double>& xCoords,
+                          const std::vector<double>& yCoords,
+                          double xMin, double xMax, double yMin, double yMax,
+                          int resolution = 100);
+
 private:
     /**
      * @brief Получить цвет для значения на тепловой карте

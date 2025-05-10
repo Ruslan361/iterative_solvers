@@ -169,3 +169,56 @@ void HeatMapGenerator::calculateStatistics(
     
     average = (count > 0) ? average / count : 0.0;
 }
+
+void HeatMapGenerator::generateAndShow(
+    const std::vector<double>& values,
+    const std::vector<double>& xCoords,
+    const std::vector<double>& yCoords,
+    double xMin, double xMax, double yMin, double yMax,
+    int resolution)
+{
+    if (values.empty() || xCoords.empty() || yCoords.empty()) {
+        qDebug() << "HeatMapGenerator::generateAndShow: Нет данных для отображения";
+        return;
+    }
+    
+    if (values.size() != xCoords.size() || values.size() != yCoords.size()) {
+        qDebug() << "HeatMapGenerator::generateAndShow: Размеры массивов не совпадают";
+        return;
+    }
+    
+    // Создаем двумерную сетку для тепловой карты
+    std::vector<std::vector<double>> gridData(resolution, std::vector<double>(resolution, std::numeric_limits<double>::quiet_NaN()));
+    
+    // Шаг сетки
+    double xStep = (xMax - xMin) / (resolution - 1);
+    double yStep = (yMax - yMin) / (resolution - 1);
+    
+    // Проходим по всем исходным точкам и помещаем их в ближайшие ячейки сетки
+    for (size_t i = 0; i < values.size(); ++i) {
+        double x = xCoords[i];
+        double y = yCoords[i];
+        
+        // Пропускаем точки за пределами области
+        if (x < xMin || x > xMax || y < yMin || y > yMax) {
+            continue;
+        }
+        
+        // Вычисляем индексы ячейки сетки
+        int gridX = static_cast<int>((x - xMin) / xStep);
+        int gridY = static_cast<int>((yMax - y) / yStep);  // Y инвертирован для визуального отображения
+        
+        // Проверяем, что индексы в пределах сетки
+        if (gridX >= 0 && gridX < resolution && gridY >= 0 && gridY < resolution) {
+            // Если ячейка уже заполнена, используем среднее значение
+            if (!std::isnan(gridData[gridY][gridX])) {
+                gridData[gridY][gridX] = (gridData[gridY][gridX] + values[i]) / 2.0;
+            } else {
+                gridData[gridY][gridX] = values[i];
+            }
+        }
+    }
+    
+    // Отображаем сетку как тепловую карту
+    showHeatMap(gridData, "Тепловая карта ошибки", 5, 5);
+}

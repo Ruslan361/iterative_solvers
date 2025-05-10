@@ -89,7 +89,8 @@ public:
     GridSystemSquare(int m, int n, double a, double b, double c, double d,
                    double (*f)(double, double),
                    double (*mu1)(double, double), double (*mu2)(double, double),
-                   double (*mu3)(double, double), double (*mu4)(double, double));
+                   double (*mu3)(double, double), double (*mu4)(double, double),
+                   double (*exact_sol_func)(double, double) = nullptr); // Added exact_sol_func
     
     ~GridSystemSquare();
     
