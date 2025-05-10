@@ -12,6 +12,45 @@ double solution2(double x, double y) {
     return std::exp(x*x-y*y);
 }
 
+// Функция правой части уравнения Пуассона для квадратной области с тем же решением, что и в G-образной области
+double function2_square(double x, double y) {
+    return 4 * (x * x + y * y) * std::exp(x * x - y * y);
+}
+
+// Точное решение для квадратной области (такое же, как и для G-образной области)
+double solution2_square(double x, double y) {
+    return std::exp(x*x-y*y);
+}
+
+// Граничные условия для квадратной области с тем же решением, что и в G-образной области
+// mu1: левая граница (x=a_bound)
+double mu1_square_solution2(double x, double y) {
+    // x фиксирован на a_bound (например, x=0 или x=1)
+    // используем формулу точного решения: exp(x^2-y^2)
+    return std::exp(x*x-y*y);
+}
+
+// mu2: правая граница (x=b_bound)
+double mu2_square_solution2(double x, double y) {
+    // x фиксирован на b_bound (например, x=1 или x=2)
+    // используем формулу точного решения: exp(x^2-y^2)
+    return std::exp(x*x-y*y);
+}
+
+// mu3: нижняя граница (y=c_bound)
+double mu3_square_solution2(double x, double y) {
+    // y фиксирован на c_bound (например, y=0 или y=1)
+    // используем формулу точного решения: exp(x^2-y^2)
+    return std::exp(x*x-y*y);
+}
+
+// mu4: верхняя граница (y=d_bound)
+double mu4_square_solution2(double x, double y) {
+    // y фиксирован на d_bound (например, y=1 или y=2)
+    // используем формулу точного решения: exp(x^2-y^2)
+    return std::exp(x*x-y*y);
+}
+
 // Новая функция правой части для квадратной области
 double custom_function_square(double x, double y) {
     if (y == 0) return 0; // Avoid division by zero, though domain y in [1,2]

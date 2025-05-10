@@ -41,7 +41,7 @@ public:
     virtual ~Solver() = default;
     
     // Абстрактный метод решения системы
-    virtual KokkosVector solve(const KokkosVector& true_solution) = 0;
+    virtual KokkosVector solve() = 0;
     
     // Установка колбэка для отслеживания итераций
     // Параметры: итерация, точность ||xn-x(n-1)||, невязка ||Ax-b||, ошибка ||u-x||

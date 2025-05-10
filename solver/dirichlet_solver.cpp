@@ -63,27 +63,30 @@ SolverResults DirichletSolver::solve() {
         throw std::runtime_error("Сетка не инициализирована");
     }
     
-    // Создаем солвер
+    // Создаем солвер с начальными параметрами
     solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
-                                        std::min({eps_precision, eps_residual, eps_exact_error}), max_iterations);
+                                        eps_residual, max_iterations);
     
-    // Устанавливаем точности для критериев останова на основе флагов
+    // Настраиваем солвер с учетом всех критериев останова
+    solver->clearStoppingCriteria(); // Очистим все критерии, чтобы задать их правильно
+    
+    // Добавляем нужные критерии останова в зависимости от настроек
     if (use_precision_stopping) {
-        solver->setPrecisionEps(eps_precision);
-    } else {
-        solver->setPrecisionEps(-1.0); // Отключаем этот критерий
+        solver->addPrecisionStoppingCriterion(eps_precision);
     }
     
     if (use_residual_stopping) {
-        solver->setResidualEps(eps_residual);
-    } else {
-        solver->setResidualEps(-1.0); // Отключаем этот критерий
+        solver->addResidualStoppingCriterion(eps_residual);
     }
     
     if (use_error_stopping) {
-        solver->setExactErrorEps(eps_exact_error);
-    } else {
-        solver->setExactErrorEps(-1.0); // Отключаем этот критерий
+        // Если нужно использовать точное решение для остановки
+        true_solution = grid->get_true_solution_vector();
+        solver->addErrorStoppingCriterion(eps_exact_error, true_solution);
+    }
+    
+    if (use_max_iterations_stopping) {
+        solver->addMaxIterationsStoppingCriterion(max_iterations);
     }
     
     // Устанавливаем колбэк для отслеживания итераций, если он был задан
@@ -91,11 +94,13 @@ SolverResults DirichletSolver::solve() {
         solver->setIterationCallback(iteration_callback);
     }
     
-    // Получаем истинное решение для сравнения
-    true_solution = grid->get_true_solution_vector();
+    // Получаем истинное решение для сравнения (даже если не используется для критерия останова)
+    if (!use_error_stopping) {
+        true_solution = grid->get_true_solution_vector();
+    }
     
     // Решаем СЛАУ
-    solution = solver->solve(true_solution);
+    solution = solver->solve();
     
     // Формируем результаты
     SolverResults results;
@@ -109,7 +114,7 @@ SolverResults DirichletSolver::solve() {
     // Вычисляем ошибку (разница между точным и численным решением)
     results.error = computeError(solution);
     
-    // Получаем векторы координат из GridSystem напрямую
+    // Получаем векторы координат из GridSystem
     results.x_coords = grid->get_x_coords();
     results.y_coords = grid->get_y_coords();
     
@@ -121,6 +126,7 @@ SolverResults DirichletSolver::solve() {
     // Добавляем нормы ошибок
     results.residual_norm = solver->getFinalResidualNorm();
     results.error_norm = solver->getFinalErrorNorm();
+    results.precision = solver->getFinalPrecision();
     
     // Вызываем обратный вызов завершения, если он установлен
     if (completion_callback) {

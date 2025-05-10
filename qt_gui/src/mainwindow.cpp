@@ -101,8 +101,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     // Add solver type combobox
-    ui->solverTypeComboBox->addItem("G-Shape Solver"); // <<< UNCOMMENTED
-    ui->solverTypeComboBox->addItem("Square Solver"); // <<< UNCOMMENTED
+    ui->solverTypeComboBox->addItem("G-Shape Solver"); 
+    ui->solverTypeComboBox->addItem("Square Solver"); 
+    ui->solverTypeComboBox->addItem("Square Solver (G-shaped solution)"); // New solver option
 
 
     // Initialize slice controls
@@ -347,11 +348,6 @@ void MainWindow::onStopButtonClicked() {
 
 void MainWindow::setupSolver() {
     // Создаем решатель с указанными параметрами
-    // solver = std::make_unique<DirichletSolver>( // <<< REMOVE THIS LINE
-    //     params.n_internal, params.m_internal, // <<< REMOVE THIS LINE
-    //     params.a_bound, params.b_bound, // <<< REMOVE THIS LINE
-    //     params.c_bound, params.d_bound // <<< REMOVE THIS LINE
-    // ); // <<< REMOVE THIS LINE
     
     // Устанавливаем критерии остановки
     double eps_precision = params.use_precision ? params.eps_precision : 0.0;
@@ -359,25 +355,60 @@ void MainWindow::setupSolver() {
     double eps_exact_error = params.use_exact_error ? params.eps_exact_error : 0.0;
     int max_iterations = params.use_max_iterations ? params.max_iterations : INT_MAX;
 
-    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
+    if (params.solver_type == "Square Solver") {
+        // Используем конструктор с передачей функций для правой части и граничных условий
         solver_square = std::make_unique<DirichletSolverSquare>(
             params.n_internal, params.m_internal,
             params.a_bound, params.b_bound,
-            params.c_bound, params.d_bound
+            params.c_bound, params.d_bound,
+            custom_function_square,   // Функция правой части
+            mu1_square,               // Граничное условие на левой границе
+            mu2_square,               // Граничное условие на нижней границе 
+            mu3_square,               // Граничное условие на правой границе
+            mu4_square                // Граничное условие на верхней границе
         );
         solver_square->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
-        // Enable all stopping criteria for square solver for now, can be refined
         solver_square->setUsePrecisionStopping(params.use_precision);
         solver_square->setUseResidualStopping(params.use_residual);
         solver_square->setUseErrorStopping(params.use_exact_error);
         solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
-    } else {
+        
+    } else if (params.solver_type == "Square Solver (G-shaped solution)") {
+        // Создаем новый квадратный решатель с функцией и решением как в G-образной области
+        // Используем конструктор, который принимает все необходимые функции
+        solver_square = std::make_unique<DirichletSolverSquare>(
+            params.n_internal, params.m_internal,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound,
+            function2_square,
+            mu1_square_solution2,
+            mu2_square_solution2,
+            mu3_square_solution2,
+            mu4_square_solution2
+        );
+        // Устанавливаем также и точное решение, если оно есть
+        // (Конструктор DirichletSolverSquare уже должен это делать, если solution2_square передается как аргумент точного решения)
+        // Для явности, можно было бы добавить: solver_square->setExactSolutionFunction(solution2_square); если бы такой метод был.
+        // Текущая реализация конструктора DirichletSolverSquare(..., f, sol) должна правильно установить exact_solution.
+        
+        solver_square->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+        solver_square->setUsePrecisionStopping(params.use_precision);
+        solver_square->setUseResidualStopping(params.use_residual);
+        solver_square->setUseErrorStopping(params.use_exact_error); // Будет работать, если exact_solution установлено
+        solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
+    } else { // Default to G-Shape Solver
+        // Создаем решатель с указанными параметрами
         solver = std::make_unique<DirichletSolver>(
             params.n_internal, params.m_internal,
             params.a_bound, params.b_bound,
             params.c_bound, params.d_bound
         );
         solver->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+        // Устанавливаем флаги использования критериев останова
+        solver->enablePrecisionStopping(params.use_precision);
+        solver->enableResidualStopping(params.use_residual);
+        solver->enableErrorStopping(params.use_exact_error);
+        solver->enableMaxIterationsStopping(params.use_max_iterations);
     }
     
     // Обновляем информацию в UI о размере матрицы
@@ -427,16 +458,44 @@ void MainWindow::updateIterationInfo(int iteration, double precision, double res
     
     // Обновляем информацию о текущей итерации
     ui->iterationsLabel->setText(QString("Итераций: %1").arg(iteration));
-    ui->precisionLabel->setText(QString("Точность ||xn-x(n-1)||: %1").arg(precision, 0, 'e', 6));
-    ui->residualNormLabel->setText(QString("Норма невязки: %1").arg(residual, 0, 'e', 6));
-    ui->errorNormLabel->setText(QString("Норма ошибки: %1").arg(error, 0, 'e', 6));
+    
+    // Only show criteria that are non-negative
+    if (precision >= 0) {
+        ui->precisionLabel->setText(QString("Точность ||xn-x(n-1)||: %1").arg(precision, 0, 'e', 6));
+    } else {
+        ui->precisionLabel->setText(QString("Точность ||xn-x(n-1)||: не применимо"));
+    }
+    
+    if (residual >= 0) {
+        ui->residualNormLabel->setText(QString("Норма невязки: %1").arg(residual, 0, 'e', 6));
+    } else {
+        ui->residualNormLabel->setText(QString("Норма невязки: не применимо"));
+    }
+    
+    if (error >= 0) {
+        ui->errorNormLabel->setText(QString("Норма ошибки: %1").arg(error, 0, 'e', 6));
+    } else {
+        ui->errorNormLabel->setText(QString("Норма ошибки: не применимо"));
+    }
     
     // Добавляем информацию в текстовое поле прогресса каждые 100 итераций или на первой итерации
     if (iteration % 100 == 0 || iteration == 1) {
         ui->progressTextEdit->append(QString("Итерация: %1").arg(iteration));
-        ui->progressTextEdit->append(QString("Точность ||x(n)-x(n-1)||: max-норма = %1").arg(precision, 0, 'e', 6));
-        ui->progressTextEdit->append(QString("Невязка ||Ax-b||: max-норма = %1").arg(residual, 0, 'e', 6));
-        ui->progressTextEdit->append(QString("Ошибка ||u-x||: max-норма = %1\n").arg(error, 0, 'e', 6));
+        
+        // Only display criteria with non-negative values
+        if (precision >= 0) {
+            ui->progressTextEdit->append(QString("Точность ||x(n)-x(n-1)||: max-норма = %1").arg(precision, 0, 'e', 6));
+        }
+        
+        if (residual >= 0) {
+            ui->progressTextEdit->append(QString("Невязка ||Ax-b||: max-норма = %1").arg(residual, 0, 'e', 6));
+        }
+        
+        if (error >= 0) {
+            ui->progressTextEdit->append(QString("Ошибка ||u-x||: max-норма = %1").arg(error, 0, 'e', 6));
+        }
+        
+        ui->progressTextEdit->append(""); // Empty line for better readability
     }
     
     // Обновляем график прогресса в реальном времени
@@ -446,9 +505,18 @@ void MainWindow::updateIterationInfo(int iteration, double precision, double res
         auto *series_error = new QLineSeries();
         
         for (const auto& data : iterationHistory) {
-            series_precision->append(data.iteration, std::log10(data.precision));
-            series_residual->append(data.iteration, std::log10(data.residual));
-            series_error->append(data.iteration, std::log10(data.error));
+            // Only add points for criteria with non-negative values
+            if (data.precision >= 0) {
+                series_precision->append(data.iteration, std::log10(data.precision));
+            }
+            
+            if (data.residual >= 0) {
+                series_residual->append(data.iteration, std::log10(data.residual));
+            }
+            
+            if (data.error >= 0) {
+                series_error->append(data.iteration, std::log10(data.error));
+            }
         }
         
         series_precision->setName("log10(Точность)");
@@ -456,26 +524,45 @@ void MainWindow::updateIterationInfo(int iteration, double precision, double res
         series_error->setName("log10(Ошибка)");
         
         auto *chart = new QChart();
-        chart->addSeries(series_precision);
-        chart->addSeries(series_residual);
-        chart->addSeries(series_error);
         
-        auto *axisX = new QValueAxis();
-        axisX->setTitleText("Итерация");
-        chart->addAxis(axisX, Qt::AlignBottom);
-        series_precision->attachAxis(axisX);
-        series_residual->attachAxis(axisX);
-        series_error->attachAxis(axisX);
+        // Only add series with data points
+        if (!series_precision->points().isEmpty()) {
+            chart->addSeries(series_precision);
+        } else {
+            delete series_precision;
+        }
         
-        auto *axisY = new QValueAxis();
-        axisY->setTitleText("log10(Норма)");
-        chart->addAxis(axisY, Qt::AlignLeft);
-        series_precision->attachAxis(axisY);
-        series_residual->attachAxis(axisY);
-        series_error->attachAxis(axisY);
+        if (!series_residual->points().isEmpty()) {
+            chart->addSeries(series_residual);
+        } else {
+            delete series_residual;
+        }
         
-        chart->setTitle("Сходимость метода");
-        chart->legend()->setVisible(true);
+        if (!series_error->points().isEmpty()) {
+            chart->addSeries(series_error);
+        } else {
+            delete series_error;
+        }
+        
+        // Only create axes and attach series if chart has at least one series
+        if (!chart->series().isEmpty()) {
+            auto *axisX = new QValueAxis();
+            axisX->setTitleText("Итерация");
+            chart->addAxis(axisX, Qt::AlignBottom);
+            
+            auto *axisY = new QValueAxis();
+            axisY->setTitleText("log10(Норма)");
+            chart->addAxis(axisY, Qt::AlignLeft);
+            
+            // Attach each series to axes
+            for (auto *series : chart->series()) {
+                series->attachAxis(axisX);
+                series->attachAxis(axisY);
+            }
+            
+            chart->setTitle("Сходимость метода");
+            chart->legend()->setVisible(true);
+        }
         
         ui->progressChartView->setChart(chart);
         ui->progressChartView->setRenderHint(QPainter::Antialiasing);
@@ -1436,7 +1523,7 @@ double MainWindow::x(int i, int n, double a_bound, double b_bound) {
     double hx = (b_bound - a_bound) / (static_cast<double>(n) + 1.0); // Step size
     return a_bound + static_cast<double>(i) * hx; // i is 1-indexed in some contexts, ensure consistency
                                                   // Assuming i here is 0 to n-1 for internal points
-                                                  // Or 0 to n+1 for all points including boundary
+                                                  // Or  0 to n+1 for all points including boundary
                                                   // The call in createTrueSolutionMatrix uses i+1, so i is 0 to n_internal-1
 }
 
@@ -1482,10 +1569,12 @@ std::vector<std::vector<double>> MainWindow::solutionTo2D() {
             }
         }
     } else {
-        qDebug() << "solutionTo2D: No solution available or solution is empty for type " << params.solver_type << ". Filling with NaN."; // <<< MODIFIED THIS LINE
+        qDebug() << "solutionTo2D: Solve not successful or no data available.";
+        // Fill with NaN or handle as needed
         for (int r = 0; r < params.m_internal; ++r) {
             std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
         }
     }
+
     return matrix;
 }

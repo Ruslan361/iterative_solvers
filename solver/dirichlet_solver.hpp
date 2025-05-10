@@ -157,7 +157,7 @@ public:
     
     // Получение названия метода
     std::string getMethodName() const {
-        return solver ? solver->getName() : "МСГ";
+        return "МСГ";
     }
     
     // Установка колбэков для отслеживания прогресса

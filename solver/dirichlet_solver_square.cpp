@@ -14,6 +14,14 @@ extern double mu2_square(double x, double y);
 extern double mu3_square(double x, double y);
 extern double mu4_square(double x, double y);
 
+// Объявления функций с тем же решением, что и G-образная область
+extern double function2_square(double x, double y);
+extern double solution2_square(double x, double y);
+extern double mu1_square_solution2(double x, double y);
+extern double mu2_square_solution2(double x, double y);
+extern double mu3_square_solution2(double x, double y);
+extern double mu4_square_solution2(double x, double y);
+
 // Вспомогательная функция для граничных условий по умолчанию (нулевое граничное условие)
 double default_boundary_value(double x, double y) {
     // Неиспользуемые параметры x и y для избежания предупреждений
@@ -35,13 +43,13 @@ DirichletSolverSquare::DirichletSolverSquare(int n, int m, double a, double b, d
         Kokkos::initialize();
     }
     
-    // Устанавливаем новые граничные условия и функцию правой части по умолчанию
-    func = custom_function_square;
-    mu1 = mu1_square;
-    mu2 = mu2_square;
-    mu3 = mu3_square;
-    mu4 = mu4_square;
-    exact_solution = nullptr; // Точного решения для этой задачи нет
+    // По умолчанию теперь используем функцию и точное решение как в G-образной области
+    func = function2_square;
+    mu1 = mu1_square_solution2;
+    mu2 = mu2_square_solution2;
+    mu3 = mu3_square_solution2;
+    mu4 = mu4_square_solution2;
+    exact_solution = solution2_square; // Устанавливаем точное решение
     
     // Инициализация сетки
     grid = std::make_unique<GridSystemSquare>(m_internal, n_internal, a_bound, b_bound, c_bound, d_bound,
@@ -172,28 +180,37 @@ SquareSolverResults DirichletSolverSquare::solve() {
     if (!grid) {
         throw std::runtime_error("Сетка не инициализирована");
     }
-    
-    // Создаем солвер
+
+    // Создаем солвер MSGSolver.
+    // eps_precision (и другие eps_*) и max_iterations здесь являются членами DirichletSolverSquare.
+    // max_iterations будет либо значением из SpinBox, либо INT_MAX, если критерий отключен.
+    // eps_precision будет либо значением из SpinBox, либо 0.0, если критерий отключен.
+    // Конструктор MSGSolver инициализирует свои внутренние eps_... значения на основе одного параметра eps,
+    // и use_... флаги в true. Это будет полностью переопределено ниже.
     solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
-                                       std::min({eps_precision, eps_residual, eps_exact_error}), max_iterations);
-    
-    // Устанавливаем точности для критериев останова на основе флагов
+                                       eps_precision, // Можно передать любой из eps, т.к. будет переопределено
+                                       max_iterations); // Передаем актуальное значение max_iterations
+
+    // Очищаем все критерии останова в MSGSolver, чтобы начать с чистого состояния.
+    solver->clearStoppingCriteria();
+
+    // Включаем и настраиваем критерии останова на основе флагов use_..._stopping
+    // и соответствующих значений eps_... / max_iterations из DirichletSolverSquare.
+
     if (use_precision_stopping) {
-        solver->setPrecisionEps(eps_precision);
-    } else {
-        solver->setPrecisionEps(-1.0); // Отключаем этот критерий
+        solver->addPrecisionStoppingCriterion(eps_precision);
     }
-    
     if (use_residual_stopping) {
-        solver->setResidualEps(eps_residual);
-    } else {
-        solver->setResidualEps(-1.0); // Отключаем этот критерий
+        solver->addResidualStoppingCriterion(eps_residual);
     }
-    
     if (use_error_stopping && hasTrueSolution()) {
-        solver->setExactErrorEps(eps_exact_error);
-    } else {
-        solver->setExactErrorEps(-1.0); // Отключаем этот критерий
+        // Получаем вектор истинного решения из сетки
+        // this->true_solution (член DirichletSolverSquare) будет обновлен.
+        this->true_solution = grid->get_true_solution_vector(); 
+        solver->addErrorStoppingCriterion(eps_exact_error, this->true_solution);
+    }
+    if (use_max_iterations_stopping) {
+        solver->addMaxIterationsStoppingCriterion(max_iterations);
     }
     
     // Устанавливаем колбэк для отслеживания итераций, если он был задан
@@ -201,17 +218,10 @@ SquareSolverResults DirichletSolverSquare::solve() {
         solver->setIterationCallback(iteration_callback);
     }
     
-    // Получаем истинное решение для сравнения, если оно доступно
-    if (hasTrueSolution()) {
-        true_solution = grid->get_true_solution_vector();
-        
-        // Решаем СЛАУ с использованием точного решения
-        solution = solver->solve(true_solution);
-    } else {
-        // Создаем пустое решение для сравнения
-        KokkosVector empty_solution("empty_solution", grid->get_rhs().extent(0));
-        solution = solver->solve(empty_solution);
-    }
+    // Получаем истинное решение для сравнения, если оно было установлено через addErrorStoppingCriterion
+    // или если hasTrueSolution() вернуло true ранее (this->true_solution уже должен быть установлен).
+    // MSGSolver::solve() использует свой внутренний exact_solution, если он был установлен.
+    solution = solver->solve();
     
     // Формируем результаты
     SquareSolverResults results;

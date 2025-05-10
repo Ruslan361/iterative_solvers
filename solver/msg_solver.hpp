@@ -21,6 +21,15 @@ private:
     double eps_residual;        // Точность по норме невязки
     double eps_exact_error;     // Точность по сравнению с точным решением
     
+    // Флаги для использования критериев остановки
+    bool use_precision;         // Флаг для включения/отключения проверки точности по разнице между xn и xn-1
+    bool use_residual;          // Флаг для включения/отключения проверки по невязке
+    bool use_exact_error;       // Флаг для включения/отключения проверки точности по истинному решению
+    bool use_max_iterations;    // Флаг для включения/отключения проверки по максимальному числу итераций
+    
+    // Вектор истинного решения (для проверки по точному решению)
+    KokkosVector exact_solution;
+    
     // Флаги и информация о сходимости
     bool converged;             // Флаг успешной сходимости
     StopCriterion stop_reason;  // Причина остановки
@@ -46,6 +55,11 @@ private:
     // Вычисление максимальной нормы вектора (максимальный модуль элемента)
     double max_norm(const KokkosVector& v) const;
 
+    // Функция для проверки условий завершения итераций
+    bool checkTerminationConditions(double precision_max_norm, double r_max_norm, 
+                                   double error_max_norm, int iterationsDone, 
+                                   StopCriterion& reason);
+
 public:
     MSGSolver(const KokkosCrsMatrix& a, 
               const KokkosVector& b, 
@@ -55,7 +69,8 @@ public:
           eps_precision(eps), eps_residual(eps), eps_exact_error(eps),
           converged(false), stop_reason(StopCriterion::ITERATIONS),
           final_residual_norm(0.0), final_error_norm(0.0), final_precision(0.0),
-          stop_requested(false) {}
+          stop_requested(false), 
+          use_precision(true), use_residual(true), use_exact_error(true), use_max_iterations(true) {}
     
     // Устанавливает точность для критерия разницы между xn и xn-1
     void setPrecisionEps(double eps) { eps_precision = eps; }
@@ -65,6 +80,39 @@ public:
     
     // Устанавливает точность для критерия сравнения с точным решением
     void setExactErrorEps(double eps) { eps_exact_error = eps; }
+    
+    // Включение/отключение использования точного решения для проверки ошибки
+    void setUseExactError(bool use) { use_exact_error = use; }
+    
+    // Устанавливает вектор истинного решения
+    void setTrueSolution(const KokkosVector& true_solution) { 
+        exact_solution = true_solution; 
+    }
+
+    // Включение/отключение использования критерия по точности
+    void setUsePrecisionStopping(bool use) { use_precision = use; }
+    
+    // Включение/отключение использования критерия по невязке
+    void setUseResidualStopping(bool use) { use_residual = use; }
+    
+    // Включение/отключение использования критерия по максимальному числу итераций
+    void setUseMaxIterationsStopping(bool use) { use_max_iterations = use; }
+    
+    // Установка максимального числа итераций
+    void setMaxIterations(int max_iter) { maxIterations = max_iter; }
+
+    // Установка всех параметров сразу
+    void setSolverParameters(double precision_eps, double residual_eps, double error_eps, int max_iter) {
+        eps_precision = precision_eps;
+        eps_residual = residual_eps;
+        eps_exact_error = error_eps;
+        maxIterations = max_iter;
+    }
+    
+    // Установка обратного вызова для отслеживания итераций
+    void setIterationCallback(std::function<void(int, double, double, double)> callback) {
+        iteration_callback = callback;
+    }
     
     // Получение информации о сходимости
     bool hasConverged() const { return converged; }
@@ -108,14 +156,42 @@ public:
     // Получение итоговой точности
     double getFinalPrecision() const { return final_precision; }
     
-    // Установка обратного вызова для отслеживания итераций
-    void setIterationCallback(std::function<void(int, double, double, double)> callback) {
-        iteration_callback = callback;
-    }
-    
-    // Метод для решения СЛАУ с дополнительными критериями остановки
-    KokkosVector solve(const KokkosVector& true_solution) override;
+    // Метод для решения СЛАУ с использованием истинного решения установленного через setTrueSolution
+    KokkosVector solve() override;
     
     // Генерация отчета о решении
     std::string generateReport(int n, int m, double a, double b, double c, double d) const;
+
+    // Очистка всех критериев останова
+    void clearStoppingCriteria() {
+        use_precision = false;
+        use_residual = false;
+        use_exact_error = false;
+        use_max_iterations = false;
+    }
+    
+    // Добавление критерия остановки по точности (разница между xn и xn-1)
+    void addPrecisionStoppingCriterion(double eps) {
+        use_precision = true;
+        eps_precision = eps;
+    }
+    
+    // Добавление критерия остановки по невязке
+    void addResidualStoppingCriterion(double eps) {
+        use_residual = true;
+        eps_residual = eps;
+    }
+    
+    // Добавление критерия остановки по сравнению с точным решением
+    void addErrorStoppingCriterion(double eps, const KokkosVector& true_sol) {
+        use_exact_error = true;
+        eps_exact_error = eps;
+        exact_solution = true_sol;
+    }
+    
+    // Добавление критерия остановки по максимальному числу итераций
+    void addMaxIterationsStoppingCriterion(int max_iter) {
+        use_max_iterations = true;
+        maxIterations = max_iter;
+    }
 };

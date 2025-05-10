@@ -1,4 +1,4 @@
-#pragma once
+ #pragma once
 
 #include <QMainWindow>
 #include <QtCharts>
@@ -226,4 +226,26 @@ private:
     int m_currentSliceIndex = 0;
 
     void updateSliceControls(); // Helper to update spinbox range and info label
+
+    // Объявления функций для квадратного решателя с G-образным решением
+    void setupGShapeSolver();
+    void updateChartGShape(const std::vector<double>& solution);
+    std::vector<std::vector<double>> solutionTo2DGShape();
+    std::vector<std::vector<double>> createTrueSolutionMatrixGShape();
+    std::vector<std::vector<double>> createErrorMatrixGShape();
 };
+
+// Forward declarations for external functions from default_functions.cpp
+extern double custom_function_square(double x, double y);
+extern double mu1_square(double x, double y);
+extern double mu2_square(double x, double y);
+extern double mu3_square(double x, double y);
+extern double mu4_square(double x, double y);
+
+// Functions for G-shaped solution in square domain
+extern double function2_square(double x, double y);
+extern double solution2_square(double x, double y);
+extern double mu1_square_solution2(double x, double y);
+extern double mu2_square_solution2(double x, double y);
+extern double mu3_square_solution2(double x, double y);
+extern double mu4_square_solution2(double x, double y);
