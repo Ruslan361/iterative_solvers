@@ -18,7 +18,23 @@ void TableTabWidget::setupUI()
     
     // Группа для настроек таблицы
     QGroupBox *settingsGroup = new QGroupBox("Настройки отображения данных");
-    QHBoxLayout *settingsLayout = new QHBoxLayout(settingsGroup);
+    QVBoxLayout *settingsMainLayout = new QVBoxLayout(settingsGroup);
+    
+    // Верхний ряд настроек с ComboBox для выбора типа данных
+    QHBoxLayout *dataTypeLayout = new QHBoxLayout();
+    QLabel *dataTypeLabel = new QLabel("Тип данных:");
+    dataTypeComboBox = new QComboBox();
+    dataTypeComboBox->addItem("Численное решение");
+    dataTypeComboBox->addItem("Точное решение");
+    dataTypeComboBox->addItem("Ошибка");
+    dataTypeComboBox->addItem("Решение на уточненной сетке");
+    
+    dataTypeLayout->addWidget(dataTypeLabel);
+    dataTypeLayout->addWidget(dataTypeComboBox);
+    dataTypeLayout->addStretch();
+    
+    // Второй ряд настроек для прореживания и кнопок
+    QHBoxLayout *controlsLayout = new QHBoxLayout();
     
     // Элементы управления для настройки отображения таблицы
     QLabel *skipFactorLabel = new QLabel("Коэффициент прореживания:");
@@ -36,27 +52,29 @@ void TableTabWidget::setupUI()
     clearTableButton->setEnabled(false);
     exportCSVButton->setEnabled(false);
     
+    controlsLayout->addWidget(skipFactorLabel);
+    controlsLayout->addWidget(skipFactorSpinBox);
+    controlsLayout->addWidget(showTableButton);
+    controlsLayout->addWidget(clearTableButton);
+    controlsLayout->addWidget(exportCSVButton);
+    
     // Информация о таблице
     tableInfoLabel = new QLabel("Таблица не содержит данных");
     
-    settingsLayout->addWidget(skipFactorLabel);
-    settingsLayout->addWidget(skipFactorSpinBox);
-    settingsLayout->addWidget(showTableButton);
-    settingsLayout->addWidget(clearTableButton);
-    settingsLayout->addWidget(exportCSVButton);
-    settingsLayout->addWidget(tableInfoLabel);
+    // Добавляем все ряды в основной layout группы настроек
+    settingsMainLayout->addLayout(dataTypeLayout);
+    settingsMainLayout->addLayout(controlsLayout);
+    settingsMainLayout->addWidget(tableInfoLabel);
     
     // Таблица для отображения данных
     dataTable = new QTableWidget();
-    dataTable->setColumnCount(4); // Для x, y, численное решение, точное решение
-    dataTable->setHorizontalHeaderLabels(QStringList() << "X" << "Y" << "Численное решение" << "Точное решение");
-    dataTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     dataTable->setEditTriggers(QAbstractItemView::NoEditTriggers); // Запрещаем редактирование
     
     // Соединяем сигналы и слоты
     connect(showTableButton, &QPushButton::clicked, this, &TableTabWidget::onShowTableButtonClicked);
     connect(clearTableButton, &QPushButton::clicked, this, &TableTabWidget::onClearTableButtonClicked);
     connect(exportCSVButton, &QPushButton::clicked, this, &TableTabWidget::onExportButtonClicked);
+    connect(dataTypeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TableTabWidget::onDataTypeChanged);
     
     // Добавляем элементы в основной layout
     mainLayout->addWidget(settingsGroup);
@@ -76,8 +94,6 @@ void TableTabWidget::setCSVData(const QString& csvData)
     exportCSVButton->setEnabled(hasData);
     
     if (hasData) {
-        tableInfoLabel->setText("Данные готовы к отображению");
-        
         // Подсчитываем количество строк в CSV
         int rows = csvData.count('\n');
         if (csvData.endsWith('\n')) {
@@ -85,11 +101,29 @@ void TableTabWidget::setCSVData(const QString& csvData)
         }
         
         tableInfoLabel->setText(QString("Доступно %1 строк данных").arg(rows));
+        
+        // Анализируем данные, чтобы узнать, какие типы данных доступны
+        bool hasExactSolution = csvData.contains("Точное решение");
+        bool hasError = csvData.contains("Ошибка");
+        bool hasRefinedGrid = csvData.contains("Уточненная сетка");
+        
+        // Активируем/деактивируем пункты ComboBox в зависимости от наличия данных
+        dataTypeComboBox->setItemData(EXACT_SOLUTION, hasExactSolution ? QVariant(QVariant::Invalid) : QVariant(0), Qt::UserRole - 1);
+        dataTypeComboBox->setItemData(ERROR, hasError ? QVariant(QVariant::Invalid) : QVariant(0), Qt::UserRole - 1);
+        dataTypeComboBox->setItemData(REFINED_GRID, hasRefinedGrid ? QVariant(QVariant::Invalid) : QVariant(0), Qt::UserRole - 1);
     } else {
         tableInfoLabel->setText("Таблица не содержит данных");
         
         // Очищаем таблицу
         dataTable->setRowCount(0);
+    }
+}
+
+void TableTabWidget::onDataTypeChanged(int index)
+{
+    // При смене типа данных, обновляем таблицу, если данные уже загружены
+    if (!currentCSVData.isEmpty()) {
+        populateTableWithData(currentCSVData);
     }
 }
 
@@ -101,6 +135,7 @@ void TableTabWidget::populateTableWithData(const QString& csvData)
     
     // Очищаем таблицу
     dataTable->setRowCount(0);
+    dataTable->setColumnCount(0);
     
     // Разбиваем CSV на строки
     QStringList lines = csvData.split('\n', Qt::SkipEmptyParts);
@@ -108,49 +143,113 @@ void TableTabWidget::populateTableWithData(const QString& csvData)
     // Используем коэффициент прореживания для уменьшения количества данных
     int skipFactor = skipFactorSpinBox->value();
     
-    // Проверяем первую строку, чтобы определить формат (количество столбцов)
-    if (!lines.isEmpty()) {
-        QStringList firstRow = lines.first().split(',');
-        dataTable->setColumnCount(firstRow.size());
+    // Определяем какой тип данных показывать
+    int dataTypeIndex = dataTypeComboBox->currentIndex();
+    QString dataTypeString;
+    switch(dataTypeIndex) {
+        case NUMERICAL_SOLUTION:
+            dataTypeString = "Численное решение";
+            break;
+        case EXACT_SOLUTION:
+            dataTypeString = "Точное решение";
+            break;
+        case ERROR:
+            dataTypeString = "Ошибка";
+            break;
+        case REFINED_GRID:
+            dataTypeString = "Решение на уточненной сетке";
+            break;
+    }
+    
+    // Разбираем данные CSV и находим нужные секции
+    QStringList dataSection;
+    bool inTargetSection = false;
+    
+    for (int i = 0; i < lines.size(); i++) {
+        const QString& line = lines[i];
+        if (line.contains(dataTypeString, Qt::CaseInsensitive)) {
+            inTargetSection = true;
+            continue; // Пропускаем строку с заголовком секции
+        } else if (line.isEmpty() || (inTargetSection && (line.contains("решение", Qt::CaseInsensitive) || 
+                   line.contains("ошибка", Qt::CaseInsensitive) || line.contains("сетка", Qt::CaseInsensitive)))) {
+            inTargetSection = false;
+        }
         
-        // Устанавливаем заголовки в зависимости от количества столбцов
+        if (inTargetSection) {
+            dataSection.append(line);
+        }
+    }
+    
+    // Если нужная секция не найдена, выводим предупреждение
+    if (dataSection.isEmpty()) {
+        tableInfoLabel->setText(QString("Данные типа '%1' не найдены").arg(dataTypeString));
+        return;
+    }
+    
+    // Анализируем первую строку, чтобы определить количество X координат
+    if (!dataSection.isEmpty()) {
+        QStringList firstRow = dataSection[0].split(',', Qt::SkipEmptyParts);
+        
+        // Создаем формат таблицы: первая колонка для Y-координат, остальные для X-координат
+        int numXCoords = firstRow.size() - 1; // Первый элемент - подпись строки или Y-координата
+        
+        // Создаем заголовки столбцов - первый пустой, остальные - X-координаты
         QStringList headers;
-        if (firstRow.size() == 3) {
-            headers << "X" << "Y" << "Численное решение";
-        } else if (firstRow.size() == 4) {
-            headers << "X" << "Y" << "Численное решение" << "Точное решение";
-        } else if (firstRow.size() == 5) {
-            headers << "X" << "Y" << "Численное решение" << "Точное решение" << "Ошибка";
-        } else {
-            // Генерируем заголовки в общем случае
-            for (int i = 0; i < firstRow.size(); ++i) {
-                headers << QString("Столбец %1").arg(i + 1);
-            }
-        }
-        dataTable->setHorizontalHeaderLabels(headers);
-    }
-    
-    // Определяем количество строк после прореживания
-    int rowCount = (lines.size() + skipFactor - 1) / skipFactor; // Округленное деление вверх
-    dataTable->setRowCount(rowCount);
-    
-    // Заполняем таблицу данными
-    int tableRow = 0;
-    for (int i = 0; i < lines.size(); i += skipFactor) {
-        if (tableRow >= rowCount) break; // Защита от переполнения
+        headers << "yi/xj";
         
-        QStringList columns = lines[i].split(',');
-        for (int j = 0; j < columns.size(); ++j) {
-            if (j < dataTable->columnCount()) {
-                dataTable->setItem(tableRow, j, new QTableWidgetItem(columns[j]));
+        for (int i = 1; i < firstRow.size(); i += skipFactor) {
+            if (i < firstRow.size()) {
+                headers << firstRow[i];
             }
         }
-        tableRow++;
+        
+        // Устанавливаем количество столбцов и заголовки
+        dataTable->setColumnCount(headers.size());
+        dataTable->setHorizontalHeaderLabels(headers);
+        
+        // Фильтруем строки с данными по коэффициенту прореживания
+        QStringList filteredDataRows;
+        for (int i = 1; i < dataSection.size(); i += skipFactor) {
+            if (i < dataSection.size()) {
+                filteredDataRows << dataSection[i];
+            }
+        }
+        
+        // Устанавливаем количество строк
+        dataTable->setRowCount(filteredDataRows.size());
+        
+        // Заполняем таблицу данными
+        for (int row = 0; row < filteredDataRows.size(); row++) {
+            QStringList columns = filteredDataRows[row].split(',');
+            
+            // Вертикальные заголовки - это первый элемент каждой строки (Y-координата)
+            if (!columns.isEmpty()) {
+                dataTable->setVerticalHeaderItem(row, new QTableWidgetItem(columns[0]));
+            }
+            
+            // Заполняем остальные ячейки (значения для каждой X-координаты)
+            int colIndex = 0;
+            for (int col = 0; col < columns.size(); col++) {
+                if (col == 0) {
+                    // Первую колонку (Y-координату) помещаем в первую ячейку строки
+                    dataTable->setItem(row, colIndex++, new QTableWidgetItem(columns[col]));
+                } else if ((col - 1) % skipFactor == 0) { // Применяем прореживание к X координатам
+                    if (colIndex < dataTable->columnCount()) {
+                        dataTable->setItem(row, colIndex++, new QTableWidgetItem(columns[col]));
+                    }
+                }
+            }
+        }
     }
+    
+    // Подгоняем ширину столбцов под содержимое
+    dataTable->resizeColumnsToContents();
     
     // Обновляем информацию о таблице
-    tableInfoLabel->setText(QString("Отображено %1 из %2 строк с коэффициентом прореживания %3")
-                            .arg(rowCount).arg(lines.size()).arg(skipFactor));
+    tableInfoLabel->setText(QString("Тип данных: %1, отображено %2 строк с коэффициентом прореживания %3")
+                            .arg(dataTypeString)
+                            .arg(dataTable->rowCount())
+                            .arg(skipFactor));
 }
 
 void TableTabWidget::onShowTableButtonClicked()
@@ -161,6 +260,7 @@ void TableTabWidget::onShowTableButtonClicked()
 void TableTabWidget::onClearTableButtonClicked()
 {
     dataTable->setRowCount(0);
+    dataTable->setColumnCount(0);
     tableInfoLabel->setText("Таблица очищена");
 }
 

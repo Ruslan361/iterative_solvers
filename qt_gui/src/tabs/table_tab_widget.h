@@ -8,6 +8,7 @@
 #include <QString>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QComboBox>
 
 class TableTabWidget : public QWidget {
     Q_OBJECT
@@ -25,6 +26,7 @@ private slots:
     void onShowTableButtonClicked();
     void onClearTableButtonClicked();
     void onExportButtonClicked();
+    void onDataTypeChanged(int index);
     
 private:
     void setupUI();
@@ -37,6 +39,13 @@ private:
     QPushButton *showTableButton;
     QPushButton *clearTableButton;
     QLabel *tableInfoLabel;
+    QComboBox *dataTypeComboBox;
     
     QString currentCSVData;
+    enum DataType {
+        NUMERICAL_SOLUTION = 0,
+        EXACT_SOLUTION = 1,
+        ERROR = 2,
+        REFINED_GRID = 3
+    };
 };

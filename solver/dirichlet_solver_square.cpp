@@ -694,6 +694,13 @@ bool SquareResultsIO::saveMatrixAndRhs(const std::string& filename, const Kokkos
 
 // Вычисление ошибки с использованием решения на более мелкой сетке
 double DirichletSolverSquare::computeRefinedGridError() {
+    // Проверяем, есть ли уже решение на текущей сетке
+    if (solution.extent(0) == 0) {
+        // Если нет, решаем задачу
+        this->solve();
+    }
+    std::vector<double> current_solution = kokkosToStdVector(solution);
+
     // Создаем решатель с теми же параметрами, но удвоенным размером сетки
     std::unique_ptr<DirichletSolverSquare> refined_solver;
     
@@ -719,15 +726,10 @@ double DirichletSolverSquare::computeRefinedGridError() {
     refined_solver->setUseResidualStopping(use_residual_stopping);
     refined_solver->setUseErrorStopping(use_error_stopping);
     refined_solver->setUseMaxIterationsStopping(use_max_iterations_stopping);
+    refined_solver->setUseRefinedGridComparison(false); // Важно! Отключаем рекурсивное использование мелкой сетки
     
     // Решаем задачу на более мелкой сетке
     SquareSolverResults refined_results = refined_solver->solve();
-    
-    // Получаем решение на текущей сетке, если оно еще не вычислено
-    if (solution.extent(0) == 0) {
-        this->solve();
-    }
-    std::vector<double> current_solution = kokkosToStdVector(solution);
     
     // Получаем координаты текущей сетки
     double h_x = (b_bound - a_bound) / n_internal;
@@ -740,9 +742,15 @@ double DirichletSolverSquare::computeRefinedGridError() {
     // Вычисляем максимальную разницу между решениями в соответствующих точках
     double max_error = 0.0;
     
-    // Инициализируем или получаем объект для хранения результатов мелкой сетки
+    // Инициализируем или очищаем объект для хранения результатов мелкой сетки
     if (!refined_grid_results) {
         refined_grid_results = std::make_unique<SquareSolverResults>();
+    } else {
+        // Очищаем предыдущие результаты, чтобы избежать утечек памяти и некорректного поведения
+        refined_grid_results->refined_grid_solution.clear();
+        refined_grid_results->refined_grid_x_coords.clear();
+        refined_grid_results->refined_grid_y_coords.clear();
+        refined_grid_results->solution_refined_diff.clear();
     }
     
     // Сохраняем решение на мелкой сетке и координаты
@@ -761,22 +769,20 @@ double DirichletSolverSquare::computeRefinedGridError() {
                 continue;  // Проверка выхода за границы
             }
             
-            // Вычисляем координаты текущего узла
-            double x_current = a_bound + i * h_x;
-            double y_current = c_bound + j * h_y;
+            // Вычисляем координаты текущей точки
+            double x = a_bound + i * h_x;
+            double y = c_bound + j * h_y;
             
-            // Находим ближайший узел в более мелкой сетке
-            int i_refined = std::round((x_current - a_bound) / refined_h_x);
-            int j_refined = std::round((y_current - c_bound) / refined_h_y);
+            // Находим соответствующий индекс в массиве решения на мелкой сетке
+            // Для мелкой сетки индексы будут в 2 раза больше
+            int refined_i = i * 2;
+            int refined_j = j * 2;
+            int refined_idx = (refined_j - 1) * (2 * n_internal - 1) + (refined_i - 1);
             
-            // Получаем индекс в одномерном массиве на более мелкой сетке
-            int idx_refined = (j_refined - 1) * (2 * n_internal - 1) + (i_refined - 1);
-            
-            if (idx_refined >= 0 && idx_refined < static_cast<int>(refined_results.solution.size())) {
-                // Вычисляем разницу между решениями
-                double diff = current_solution[idx_current] - refined_results.solution[idx_refined];
+            if (refined_idx < static_cast<int>(refined_results.solution.size())) {
+                double diff = std::abs(current_solution[idx_current] - refined_results.solution[refined_idx]);
                 refined_grid_results->solution_refined_diff[idx_current] = diff;
-                max_error = std::max(max_error, std::abs(diff));
+                max_error = std::max(max_error, diff);
             }
             
             idx_current++;

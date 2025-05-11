@@ -440,6 +440,34 @@ void MainWindow::handleResults(const SolverResults& res) {
     // Сохраняем результаты
     results = res;
     solveSuccessful = true;
+
+    // Обновляем UI с причиной остановки
+    QString stopReasonText;
+    switch (res.stop_reason) {
+        case StopCriterion::ITERATIONS:
+            stopReasonText = "Достигнуто максимальное число итераций.";
+            break;
+        case StopCriterion::PRECISION:
+            stopReasonText = "Достигнута требуемая точность по норме разности xn и xn-1.";
+            break;
+        case StopCriterion::RESIDUAL:
+            stopReasonText = "Достигнута требуемая точность по норме невязки.";
+            break;
+        case StopCriterion::EXACT_ERROR:
+            stopReasonText = "Достигнута требуемая точность по норме разности с истинным решением.";
+            break;
+        case StopCriterion::INTERRUPTED:
+            stopReasonText = "Прервано пользователем.";
+            break;
+        case StopCriterion::NUMERICAL_ERROR:
+            stopReasonText = "Ошибка: знаменатель Az_dot_z для alpha близок к нулю. Остановка.";
+            break;
+        default:
+            stopReasonText = "Неизвестная причина остановки.";
+            break;
+    }
+
+    ui->statusLabel->setText(stopReasonText);
 }
 
 // <<< ADD THIS SLOT IMPLEMENTATION

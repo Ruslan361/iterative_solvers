@@ -33,12 +33,12 @@ void SolverTabWidget::setupUI()
     
     QLabel *nInternalLabel = new QLabel("Внутренние узлы по X:");
     nInternalSpinBox = new QSpinBox();
-    nInternalSpinBox->setRange(4, 500);
+    nInternalSpinBox->setRange(4, 10000);
     nInternalSpinBox->setValue(30);
     
     QLabel *mInternalLabel = new QLabel("Внутренние узлы по Y:");
     mInternalSpinBox = new QSpinBox();
-    mInternalSpinBox->setRange(4, 500);
+    mInternalSpinBox->setRange(4, 10000);
     mInternalSpinBox->setValue(30);
     
     gridSizeLayout->addWidget(nInternalLabel, 0, 0);
@@ -165,6 +165,7 @@ void SolverTabWidget::setupUI()
     connect(solveButton, &QPushButton::clicked, this, &SolverTabWidget::onSolveButtonClicked);
     connect(stopButton, &QPushButton::clicked, this, &SolverTabWidget::onStopButtonClicked);
     connect(solverTypeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SolverTabWidget::onSolverTypeChanged);
+    onSolverTypeChanged(0);
 }
 
 void SolverTabWidget::onSolveButtonClicked()
@@ -180,14 +181,26 @@ void SolverTabWidget::onStopButtonClicked()
 void SolverTabWidget::onSolverTypeChanged(int index)
 {
     // Обновляем доступность опций в зависимости от выбранного типа решателя
-    bool isSquareTask = index < 2; // Первые два варианта - квадратная область
+    bool isTestTask = (index == 0); // "Ступень 2: Тестовая задача" - индекс 0
+    bool isSquareMainTask = (index == 1); // "Ступень 2: Основная задача" - индекс 1
+    bool isGShapeTask = (index == 2); // "Ступень 3" - индекс 2
     
-    useExactErrorCheckBox->setEnabled(isSquareTask);
-    epsExactErrorSpinBox->setEnabled(isSquareTask && useExactErrorCheckBox->isChecked());
-    useRefinedGridCheckBox->setEnabled(isSquareTask);
+    // Критерий по ошибке доступен только для тестовой задачи и G-образной области, где известно точное решение
+    useExactErrorCheckBox->setEnabled(isTestTask || isGShapeTask);
+    epsExactErrorSpinBox->setEnabled((isTestTask || isGShapeTask));
     
+    // Уточненная сетка доступна только для основной задачи (ступень 2)
+
+    if (isSquareMainTask)
+    {
+        useRefinedGridCheckBox->setCheckState(Qt::Checked);
+    }
+    else {
+        useRefinedGridCheckBox->setCheckState(Qt::Unchecked);
+    }
+    useRefinedGridCheckBox->setEnabled(isSquareMainTask);
     // Обновляем диапазоны значений для параметров сетки
-    if (isSquareTask) {
+    if (isSquareMainTask || isTestTask) {
         // Для квадратной области рекомендуем равное количество узлов по X и Y
         if (nInternalSpinBox->value() != mInternalSpinBox->value()) {
             mInternalSpinBox->setValue(nInternalSpinBox->value());

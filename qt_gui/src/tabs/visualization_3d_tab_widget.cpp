@@ -239,34 +239,7 @@ void Visualization3DTabWidget::createOrUpdateRefinedGridSurfaces(
         // Получаем указатель на SquareShapeRegion
         auto* squareRegion = dynamic_cast<SquareShapeRegion*>(shapeRegion.get());
         
-        // Создаем поверхности с учетом решения на мелкой сетке
-        squareRegion->createSurfacesWithRefinedGrid(
-            solution,
-            refined_grid_solution,
-            solution_refined_diff,
-            x_coords,
-            y_coords,
-            refined_grid_x_coords,
-            refined_grid_y_coords,
-            a_bound, b_bound,
-            c_bound, d_bound,
-            decimationFactor
-        );
-        
-        // Настраиваем чекбоксы
-        showSolutionCheckBox->setChecked(true);
-        showSolutionCheckBox->setEnabled(true);
-        showSolutionCheckBox->setText("Показать численное решение v(N)(x,y)");
-        
-        showTrueSolutionCheckBox->setChecked(true);
-        showTrueSolutionCheckBox->setEnabled(true);
-        showTrueSolutionCheckBox->setText("Показать решение v2(N2)(x,y) на сетке с половинным шагом");
-        
-        showErrorCheckBox->setChecked(true);
-        showErrorCheckBox->setEnabled(true);
-        showErrorCheckBox->setText("Показать разность решений v(N) и v2(N2)");
-        
-        // Отключаем текущие соединения
+        // Отключаем текущие соединения перед любыми изменениями UI и созданием поверхностей
         disconnect(showTrueSolutionCheckBox, nullptr, nullptr, nullptr);
         disconnect(showErrorCheckBox, nullptr, nullptr, nullptr);
         
@@ -284,6 +257,34 @@ void Visualization3DTabWidget::createOrUpdateRefinedGridSurfaces(
                         squareRegion->setSolutionRefinedDiffVisible(visible);
                     }
                 });
+        
+        // Создаем поверхности с учетом решения на мелкой сетке
+        squareRegion->createSurfacesWithRefinedGrid(
+            solution,
+            refined_grid_solution,
+            solution_refined_diff,
+            x_coords,
+            y_coords,
+            refined_grid_x_coords,
+            refined_grid_y_coords,
+            a_bound, b_bound,
+            c_bound, d_bound,
+            decimationFactor
+        );
+        
+        // Настраиваем чекбоксы ПОСЛЕ создания поверхностей и установки соединений
+        showSolutionCheckBox->setText("Показать численное решение v(N)(x,y)");
+        showTrueSolutionCheckBox->setText("Показать решение v2(N2)(x,y) на сетке с половинным шагом");
+        showErrorCheckBox->setText("Показать разность решений v(N) и v2(N2)");
+        
+        showSolutionCheckBox->setEnabled(true);
+        showTrueSolutionCheckBox->setEnabled(true);
+        showErrorCheckBox->setEnabled(true);
+        
+        // Теперь устанавливаем состояние чекбоксов, что запустит обновленные обработчики
+        showSolutionCheckBox->setChecked(true);
+        showTrueSolutionCheckBox->setChecked(true);
+        showErrorCheckBox->setChecked(true);
         
         // Активируем кнопки
         showHeatMapButton->setEnabled(true);

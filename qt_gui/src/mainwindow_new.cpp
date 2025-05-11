@@ -250,20 +250,20 @@ void MainWindow::setupSolver()
 
         // Настраиваем функции на основе типа задачи
         if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
-            // Функции для тестовой задачи
-            f_func = custom_function_square;
-            mu1_func = mu1_square;
-            mu2_func = mu2_square;
-            mu3_func = mu3_square;
-            mu4_func = mu4_square;
-        } else if (params.solver_type.contains("основная", Qt::CaseInsensitive)) {
-            // Функции для основной задачи (G-образное решение)
+            // Функции для тестовой задачи (должна иметь точное решение)
             f_func = function2_square;
             mu1_func = mu1_square_solution2;
             mu2_func = mu2_square_solution2;
             mu3_func = mu3_square_solution2;
             mu4_func = mu4_square_solution2;
             exact_solution_func = solution2_square;
+        } else if (params.solver_type.contains("основная", Qt::CaseInsensitive)) {
+            // Функции для основной задачи (с граничными условиями, без точного решения)
+            f_func = custom_function_square;
+            mu1_func = mu1_square;
+            mu2_func = mu2_square;
+            mu3_func = mu3_square;
+            mu4_func = mu4_square;
         }
 
         // Создаем квадратный решатель для задач ступени 2 с нужными функциями
@@ -399,40 +399,40 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
     
     // Обновляем визуализацию
     visualizationTab->updateChart(
-        results_sq.solution,
-        results_sq.x_coords,
-        results_sq.y_coords,
-        results_sq.true_solution,
+        this->results_square.solution,
+        this->results_square.x_coords,
+        this->results_square.y_coords,
+        this->results_square.true_solution,
         params.a_bound, params.b_bound,
         params.c_bound, params.d_bound
     );
     visualizationTab->setSolveSuccessful(true);
     
     // Обновляем 3D визуализацию
-    if (params.use_refined_grid && !results_sq.refined_grid_solution.empty()) {
+    if (params.use_refined_grid && !this->results_square.refined_grid_solution.empty()) {
         // Визуализация с учетом решения на уточненной сетке
         visualization3DTab->createOrUpdateRefinedGridSurfaces(
-            results_sq.solution,
-            results_sq.refined_grid_solution,
-            results_sq.solution_refined_diff,
-            results_sq.x_coords,
-            results_sq.y_coords,
-            results_sq.refined_grid_x_coords,
-            results_sq.refined_grid_y_coords,
+            this->results_square.solution,
+            this->results_square.refined_grid_solution,
+            this->results_square.solution_refined_diff,
+            this->results_square.x_coords,
+            this->results_square.y_coords,
+            this->results_square.refined_grid_x_coords,
+            this->results_square.refined_grid_y_coords,
             params.a_bound, params.b_bound,
             params.c_bound, params.d_bound
         );
         
         // Устанавливаем информацию об ошибке на уточненной сетке
-        progressTab->setRefinedGridError(results_sq.refined_grid_error);
+        progressTab->setRefinedGridError(this->results_square.refined_grid_error);
     } else {
         // Стандартная визуализация
         visualization3DTab->createOrUpdate3DSurfaces(
-            results_sq.solution,
-            results_sq.true_solution,
-            results_sq.error,
-            results_sq.x_coords,
-            results_sq.y_coords,
+            this->results_square.solution,
+            this->results_square.true_solution,
+            this->results_square.error,
+            this->results_square.x_coords,
+            this->results_square.y_coords,
             params.a_bound, params.b_bound,
             params.c_bound, params.d_bound,
             true, // is_square_solver
@@ -447,12 +447,12 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
     // Обновляем информацию о решении на вкладке прогресса
     progressTab->updateSolverFinished(
         solveSuccessful,
-        results_sq.iterations,
-        results_sq.residual_norm,
-        results_sq.error_norm,
-        results_sq.precision,
-        results_sq.converged,
-        results_sq.stop_reason
+        this->results_square.iterations,
+        this->results_square.residual_norm,
+        this->results_square.error_norm,
+        this->results_square.precision,
+        this->results_square.converged,
+        this->results_square.stop_reason
     );
     
     // Обновляем информацию о матрице - используем другие доступные поля
