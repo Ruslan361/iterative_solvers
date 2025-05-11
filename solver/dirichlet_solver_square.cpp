@@ -265,7 +265,14 @@ SquareSolverResults DirichletSolverSquare::solve() {
     // Добавляем нормы ошибок
     results.residual_norm = solver->getFinalResidualNorm();
     results.error_norm = solver->getFinalErrorNorm();
-    results.precision = solver->getFinalPrecision(); // <<< ADD THIS LINE
+    results.precision = solver->getFinalPrecision();
+    
+    // Вычисляем ошибку относительно решения на более мелкой сетке, если флаг включен
+    if (use_refined_grid_comparison) {
+        results.refined_grid_error = computeRefinedGridError();
+    } else {
+        results.refined_grid_error = -1.0; // Недоступно/не вычислено
+    }
 
     // Вызываем обратный вызов завершения, если он установлен
     if (completion_callback) {
@@ -674,4 +681,85 @@ bool SquareResultsIO::saveMatrixAndRhs(const std::string& filename, const Kokkos
     }
     
     return true;
+}
+
+// Вычисление ошибки с использованием решения на более мелкой сетке
+double DirichletSolverSquare::computeRefinedGridError() {
+    // Указатель на решатель для более мелкой сетки
+    std::unique_ptr<DirichletSolverSquare> refined_solver;
+    
+    // Создаем решатель с теми же параметрами, но удвоенным размером сетки
+    if (exact_solution == nullptr && mu1 && mu2 && mu3 && mu4) {
+        // Создаем новый решатель с граничными условиями, если нет точного решения, но есть граничные условия
+        refined_solver = std::make_unique<DirichletSolverSquare>(
+            n_internal * 2, m_internal * 2,
+            a_bound, b_bound, c_bound, d_bound,
+            func, mu1, mu2, mu3, mu4
+        );
+    } else {
+        // По умолчанию создаем решатель с точным решением, если оно есть
+        refined_solver = std::make_unique<DirichletSolverSquare>(
+            n_internal * 2, m_internal * 2,
+            a_bound, b_bound, c_bound, d_bound,
+            func, exact_solution
+        );
+    }
+    
+    // Настраиваем параметры решателя для более мелкой сетки
+    refined_solver->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
+    refined_solver->setUsePrecisionStopping(use_precision_stopping);
+    refined_solver->setUseResidualStopping(use_residual_stopping);
+    refined_solver->setUseErrorStopping(use_error_stopping);
+    refined_solver->setUseMaxIterationsStopping(use_max_iterations_stopping);
+    
+    // Решаем задачу на более мелкой сетке
+    SquareSolverResults refined_results = refined_solver->solve();
+    
+    // Получаем решение на текущей сетке, если оно еще не вычислено
+    if (solution.extent(0) == 0) {
+        this->solve();
+    }
+    std::vector<double> current_solution = kokkosToStdVector(solution);
+    
+    // Получаем координаты текущей сетки
+    double h_x = (b_bound - a_bound) / n_internal;
+    double h_y = (d_bound - c_bound) / m_internal;
+    
+    // Получаем координаты и решение на более мелкой сетке
+    double refined_h_x = (b_bound - a_bound) / (2 * n_internal);
+    double refined_h_y = (d_bound - c_bound) / (2 * m_internal);
+    
+    // Вычисляем максимальную разницу между решениями в соответствующих точках
+    double max_error = 0.0;
+    int idx_current = 0;
+    
+    // Обходим узлы текущей сетки
+    for (int j = 1; j < m_internal; ++j) {
+        for (int i = 1; i < n_internal; ++i) {
+            if (idx_current >= static_cast<int>(current_solution.size())) {
+                continue;  // Проверка выхода за границы
+            }
+            
+            // Вычисляем координаты текущего узла
+            double x_current = a_bound + i * h_x;
+            double y_current = c_bound + j * h_y;
+            
+            // Находим ближайший узел в более мелкой сетке
+            int i_refined = std::round((x_current - a_bound) / refined_h_x);
+            int j_refined = std::round((y_current - c_bound) / refined_h_y);
+            
+            // Получаем индекс в одномерном массиве на более мелкой сетке
+            int idx_refined = (j_refined - 1) * (2 * n_internal - 1) + (i_refined - 1);
+            
+            if (idx_refined >= 0 && idx_refined < static_cast<int>(refined_results.solution.size())) {
+                // Вычисляем разницу между решениями
+                double diff = std::abs(current_solution[idx_current] - refined_results.solution[idx_refined]);
+                max_error = std::max(max_error, diff);
+            }
+            
+            idx_current++;
+        }
+    }
+    
+    return max_error;
 }

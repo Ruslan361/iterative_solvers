@@ -268,6 +268,7 @@ void MainWindow::onSolveButtonClicked() {
         params.use_residual = ui->residualCheckBox->isChecked();
         params.use_exact_error = ui->exactErrorCheckBox->isChecked();
         params.use_max_iterations = ui->maxIterCheckBox->isChecked();
+        params.use_refined_grid = ui->refinedGridCheckBox->isChecked();
         params.solver_type = ui->solverTypeComboBox->currentText(); // <<< UNCOMMENTED
         // Ensure default solver_type is used if UI element is not available
         // if (params.solver_type.isEmpty()) { // Default to G-Shape if not set by UI // <<< REMOVE THIS BLOCK
@@ -392,6 +393,7 @@ void MainWindow::setupSolver() {
         solver_square->setUseResidualStopping(params.use_residual);
         solver_square->setUseErrorStopping(params.use_exact_error);
         solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
+        solver_square->setUseRefinedGridComparison(params.use_refined_grid); // Добавленная строка
         
     } else if (params.solver_type == "Square Solver (G-shaped solution)") {
         // Создаем новый квадратный решатель с функцией std::exp(x*x - y*y) и соответствующей правой частью
@@ -410,6 +412,8 @@ void MainWindow::setupSolver() {
         solver_square->setUseResidualStopping(params.use_residual);
         solver_square->setUseErrorStopping(params.use_exact_error); // Будет работать, так как exact_solution установлено
         solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
+        solver_square->setUseRefinedGridComparison(params.use_refined_grid); // Добавленная строка
+        
     } else { // Default to G-Shape Solver
         // Создаем решатель с указанными параметрами
         solver = std::make_unique<DirichletSolver>(
@@ -460,6 +464,14 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& res_sq) {
     results.y_coords = res_sq.y_coords;
 
     solveSuccessful = true;
+    
+    // Отображаем информацию об ошибке относительно решения на более мелкой сетке
+    if (res_sq.refined_grid_error >= 0) {
+        ui->refinedGridErrorLabel->setText(QString("Ошибка относительно решения на мелкой сетке: %1")
+            .arg(res_sq.refined_grid_error, 0, 'e', 6));
+    } else {
+        ui->refinedGridErrorLabel->setText("Ошибка относительно решения на мелкой сетке: Н/Д");
+    }
 }
 
 void MainWindow::updateIterationInfo(int iteration, double precision, double residual, double error) {

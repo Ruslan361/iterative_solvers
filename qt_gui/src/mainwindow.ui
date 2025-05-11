@@ -241,6 +241,13 @@
                  </property>
                 </widget>
                </item>
+               <item row="4" column="0">
+                <widget class="QCheckBox" name="refinedGridCheckBox">
+                 <property name="text">
+                  <string>Использовать сравнение с решением на более мелкой сетке (2nx2m):</string>
+                 </property>
+                </widget>
+               </item>
               </layout>
              </widget>
             </item>
@@ -321,6 +328,13 @@
                 <widget class="QLabel" name="errorNormLabel">
                  <property name="text">
                   <string>Норма ошибки: 0</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="refinedGridErrorLabel">
+                 <property name="text">
+                  <string>Ошибка относительно решения на мелкой сетке: Н/Д</string>
                  </property>
                 </widget>
                </item>

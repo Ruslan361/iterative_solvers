@@ -22,6 +22,7 @@ struct SquareSolverResults {
     double residual_norm;                // Норма невязки
     double error_norm;                   // Норма ошибки
     double precision;                    // Достигнутая точность по разнице решений
+    double refined_grid_error;           // Ошибка относительно решения на более мелкой сетке
 };
 
 // Класс для работы с решателем уравнения Дирихле в квадратной области
@@ -95,6 +96,13 @@ public:
     // Метод для получения доступа к GridSystemSquare
     const GridSystemSquare* getGridSystem() const { return grid.get(); }
 
+    // Вычисление ошибки с использованием решения на более мелкой сетке
+    double computeRefinedGridError();
+    
+    // Флаг использования сравнения с решением на более мелкой сетке
+    void setUseRefinedGridComparison(bool value) { use_refined_grid_comparison = value; }
+    bool getUseRefinedGridComparison() const { return use_refined_grid_comparison; }
+
 private:
     // Параметры сетки
     int n_internal, m_internal;
@@ -111,6 +119,7 @@ private:
     bool use_residual_stopping;
     bool use_error_stopping;
     bool use_max_iterations_stopping;
+    bool use_refined_grid_comparison = false;  // Флаг использования сравнения с решением на более мелкой сетке
     
     // Функции для уравнения и граничных условий
     double (*func)(double, double) = nullptr;  // Функция правой части уравнения

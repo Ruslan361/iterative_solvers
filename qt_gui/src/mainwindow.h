@@ -185,6 +185,7 @@ private:
         bool use_residual;
         bool use_exact_error;
         bool use_max_iterations;
+        bool use_refined_grid; // Флаг для сравнения с решением на более мелкой сетке
         QString solver_type;
     } params;
     
