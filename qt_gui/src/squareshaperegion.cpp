@@ -352,29 +352,81 @@ QSurface3DSeries* SquareShapeRegion::createSquareSurface(
     std::set<double> uniqueX(xCoords.begin(), xCoords.end());
     std::set<double> uniqueY(yCoords.begin(), yCoords.end());
 
-    // Определяем шаг для прореживания
-    int stepX = 1;
-    int stepY = 1;
-    
-    if (decimationFactor > 1) {
-        stepX = std::max(1, static_cast<int>(uniqueX.size() / decimationFactor));
-        stepY = std::max(1, static_cast<int>(uniqueY.size() / decimationFactor));
-    }
-
-    // Создаем вектора уникальных координат с учетом прореживания
+    // Преобразуем в вектора для индексирования
     std::vector<double> uniqueXVec(uniqueX.begin(), uniqueX.end());
     std::vector<double> uniqueYVec(uniqueY.begin(), uniqueY.end());
+
+    // Определяем необходимый шаг для прореживания сетки до максимум 100x100 узлов
+    const int MAX_GRID_SIZE = 100;
+    int stepX = 1;
+    int stepY = 1;
+
+    // Если размер сетки превышает 100x100, вычисляем шаг прореживания
+    if (uniqueX.size() > MAX_GRID_SIZE || uniqueY.size() > MAX_GRID_SIZE) {
+        stepX = std::ceil(static_cast<double>(uniqueX.size()) / MAX_GRID_SIZE);
+        stepY = std::ceil(static_cast<double>(uniqueY.size()) / MAX_GRID_SIZE);
+        
+        // Учитываем пользовательский коэффициент прореживания, если он больше полученного
+        if (decimationFactor > stepX) stepX = decimationFactor;
+        if (decimationFactor > stepY) stepY = decimationFactor;
+        
+        qDebug() << "Grid size reduced: " << uniqueX.size() << "x" << uniqueY.size() 
+                 << " -> ~" << (uniqueX.size() / stepX) << "x" << (uniqueY.size() / stepY)
+                 << " (steps: " << stepX << "x" << stepY << ")";
+    } else if (decimationFactor > 1) {
+        // Если сетка меньше порога, но задан пользовательский decimationFactor
+        stepX = decimationFactor;
+        stepY = decimationFactor;
+    }
 
     // Создаем массив для данных поверхности
     QSurfaceDataArray* dataArray = new QSurfaceDataArray();
     
-    // Проходим по каждой координате Y с учетом шага прореживания
-    for (size_t yIndex = 0; yIndex < uniqueYVec.size(); yIndex += stepY) {
+    // Индексы для первого и последнего X, Y (гарантируем их включение)
+    const size_t firstXIndex = 0;
+    const size_t firstYIndex = 0;
+    const size_t lastXIndex = uniqueXVec.size() - 1;
+    const size_t lastYIndex = uniqueYVec.size() - 1;
+    
+    // Отслеживаем индексы для Y
+    std::vector<size_t> yIndices;
+    
+    // Добавляем первый индекс
+    yIndices.push_back(firstYIndex);
+    
+    // Добавляем промежуточные индексы с шагом stepY
+    for (size_t yIndex = firstYIndex + stepY; yIndex < lastYIndex; yIndex += stepY) {
+        yIndices.push_back(yIndex);
+    }
+    
+    // Добавляем последний индекс, если он еще не добавлен
+    if (yIndices.empty() || yIndices.back() != lastYIndex) {
+        yIndices.push_back(lastYIndex);
+    }
+
+    // Проходим по выбранным координатам Y
+    for (size_t yIndex : yIndices) {
         double yValue = uniqueYVec[yIndex];
         QSurfaceDataRow* dataRow = new QSurfaceDataRow();
         
-        // Проходим по каждой координате X с учетом шага прореживания
-        for (size_t xIndex = 0; xIndex < uniqueXVec.size(); xIndex += stepX) {
+        // Отслеживаем индексы для X
+        std::vector<size_t> xIndices;
+        
+        // Добавляем первый индекс
+        xIndices.push_back(firstXIndex);
+        
+        // Добавляем промежуточные индексы с шагом stepX
+        for (size_t xIndex = firstXIndex + stepX; xIndex < lastXIndex; xIndex += stepX) {
+            xIndices.push_back(xIndex);
+        }
+        
+        // Добавляем последний индекс, если он еще не добавлен
+        if (xIndices.empty() || xIndices.back() != lastXIndex) {
+            xIndices.push_back(lastXIndex);
+        }
+        
+        // Проходим по выбранным координатам X
+        for (size_t xIndex : xIndices) {
             double xValue = uniqueXVec[xIndex];
             
             // Находим значение функции для данной точки (x, y)
