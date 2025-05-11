@@ -16,13 +16,21 @@ struct SquareSolverResults {
     std::vector<double> error;            // Ошибка (разница между численным и точным решением)
     std::vector<double> x_coords;         // Координаты X узлов сетки
     std::vector<double> y_coords;         // Координаты Y узлов сетки
-    int iterations;                      // Количество итераций
-    bool converged;                      // Флаг сходимости
+    int iterations = 0;                  // Количество итераций
+    bool converged = false;              // Флаг сходимости
     std::string stop_reason;             // Причина останова
-    double residual_norm;                // Норма невязки
-    double error_norm;                   // Норма ошибки
-    double precision;                    // Достигнутая точность по разнице решений
-    double refined_grid_error;           // Ошибка относительно решения на более мелкой сетке
+    double precision = 0.0;              // Достигнутая точность
+    double residual_norm = 0.0;          // Норма невязки
+    double error_norm = 0.0;             // Норма ошибки
+    
+    // Данные для сравнения с более мелкой сеткой
+    double refined_grid_error = -1.0;    // Ошибка относительно решения на мелкой сетке
+    
+    // Новые поля для хранения решения на более мелкой сетке и их разницы
+    std::vector<double> refined_grid_solution;     // Решение на мелкой сетке
+    std::vector<double> solution_refined_diff;     // Разница между решениями
+    std::vector<double> refined_grid_x_coords;     // Координаты X на более мелкой сетке
+    std::vector<double> refined_grid_y_coords;     // Координаты Y на более мелкой сетке
 };
 
 // Класс для работы с решателем уравнения Дирихле в квадратной области
@@ -59,6 +67,18 @@ public:
     std::vector<double> getSolution() const;
     std::vector<double> getTrueSolution() const;
     std::vector<std::vector<double>> solutionToMatrix() const;
+    
+    // Методы для работы с решением на более мелкой сетке
+    const SquareSolverResults* getRefinedGridResults() const {
+        return refined_grid_results.get();
+    }
+    
+    SquareSolverResults* getRefinedGridResultsPtr() {
+        if (!refined_grid_results) {
+            refined_grid_results = std::make_unique<SquareSolverResults>();
+        }
+        return refined_grid_results.get();
+    }
     
     // Вспомогательные методы
     std::string generateReport() const;
@@ -138,6 +158,9 @@ private:
     // Векторы решений
     KokkosVector solution;
     KokkosVector true_solution;
+    
+    // Результаты решения на более мелкой сетке
+    std::unique_ptr<SquareSolverResults> refined_grid_results;
     
     // Функции обратного вызова
     IterationCallbackType iteration_callback;

@@ -121,9 +121,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     // Add solver type combobox
-    ui->solverTypeComboBox->addItem("G-Shape Solver"); 
-    ui->solverTypeComboBox->addItem("Square Solver"); 
-    ui->solverTypeComboBox->addItem("Square Solver (G-shaped solution)"); // New solver option
+    ui->solverTypeComboBox->addItem("Ступень 3"); 
+    ui->solverTypeComboBox->addItem("Основная задача (ступень 2)"); 
+    ui->solverTypeComboBox->addItem("Тестовая задача (ступень 2)"); // New solver option
 
     // Подключаем сигнал смены вкладок
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
@@ -301,9 +301,9 @@ void MainWindow::onSolveButtonClicked() {
         // Создаем поток и рабочий объект
         solverThread = new QThread(this);
         
-        if (params.solver_type == "Square Solver" || params.solver_type == "Square Solver (G-shaped solution)") {
+        if (params.solver_type == "Основная задача (ступень 2)" || params.solver_type == "Тестовая задача (ступень 2)") {
             worker = new SolverWorker(std::move(solver_square));
-        } else { // G-Shape Solver
+        } else { // Ступень 3
             worker = new SolverWorker(std::move(solver));
         }
         worker->moveToThread(solverThread);
@@ -311,9 +311,9 @@ void MainWindow::onSolveButtonClicked() {
         // Соединяем сигналы и слоты
         connect(solverThread, &QThread::started, worker, &SolverWorker::process);
         connect(worker, &SolverWorker::finished, this, &MainWindow::onSolverFinished);
-        if (params.solver_type == "Square Solver" || params.solver_type == "Square Solver (G-shaped solution)") {
+        if (params.solver_type == "Основная задача (ступень 2)" || params.solver_type == "Тестовая задача (ступень 2)") {
             connect(worker, &SolverWorker::resultReadySquare, this, &MainWindow::handleResultsSquare);
-        } else { // G-Shape Solver
+        } else { // Ступень 3
             connect(worker, &SolverWorker::resultReady, this, &MainWindow::handleResults);
         }
         connect(worker, &SolverWorker::iterationUpdate, this, &MainWindow::updateIterationInfo);
@@ -376,7 +376,7 @@ void MainWindow::setupSolver() {
     double eps_exact_error = params.use_exact_error ? params.eps_exact_error : 0.0;
     int max_iterations = params.use_max_iterations ? params.max_iterations : INT_MAX;
 
-    if (params.solver_type == "Square Solver") {
+    if (params.solver_type == "Основная задача (ступень 2)") {
         // Используем конструктор с передачей функций для правой части и граничных условий
         solver_square = std::make_unique<DirichletSolverSquare>(
             params.n_internal, params.m_internal,
@@ -395,7 +395,7 @@ void MainWindow::setupSolver() {
         solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
         solver_square->setUseRefinedGridComparison(params.use_refined_grid); // Добавленная строка
         
-    } else if (params.solver_type == "Square Solver (G-shaped solution)") {
+    } else if (params.solver_type == "Тестовая задача (ступень 2)") {
         // Создаем новый квадратный решатель с функцией std::exp(x*x - y*y) и соответствующей правой частью
         solver_square = std::make_unique<DirichletSolverSquare>(
             params.n_internal, params.m_internal,
@@ -414,7 +414,7 @@ void MainWindow::setupSolver() {
         solver_square->setUseMaxIterationsStopping(params.use_max_iterations);
         solver_square->setUseRefinedGridComparison(params.use_refined_grid); // Добавленная строка
         
-    } else { // Default to G-Shape Solver
+    } else { // Default to Ступень 3
         // Создаем решатель с указанными параметрами
         solver = std::make_unique<DirichletSolver>(
             params.n_internal, params.m_internal,
@@ -1139,40 +1139,137 @@ void MainWindow::createOrUpdate3DSurfaces() {
     try {
         int decimationFactor = decimationFactorSpinBox ? decimationFactorSpinBox->value() : 1;
         
-        if (params.solver_type == "Square Solver" || params.solver_type == "Square Solver (G-shaped solution)") {
-            // Для квадратного решателя
+        if (params.solver_type == "Основная задача (ступень 2)" || params.solver_type == "Тестовая задача (ступень 2)") {
+            // Для квадратных областей (ступень 2)
             if (!results_square.solution.empty()) {
                 // Создаем объект региона, если он еще не создан или имеет неверный тип
                 if (!shapeRegion || !dynamic_cast<SquareShapeRegion*>(shapeRegion.get())) {
                     shapeRegion = std::make_unique<SquareShapeRegion>(graph3D);
                 }
                 
-                // Создаем поверхности
-                shapeRegion->createSurfaces(
-                    results_square.solution,
-                    results_square.true_solution,
-                    results_square.error,
-                    results_square.x_coords,
-                    results_square.y_coords,
-                    params.a_bound, params.b_bound,
-                    params.c_bound, params.d_bound,
-                    decimationFactor
-                );
+                // Получаем указатель на SquareShapeRegion
+                SquareShapeRegion* squareRegion = dynamic_cast<SquareShapeRegion*>(shapeRegion.get());
                 
-                // Настраиваем элементы управления
-                showSolutionCheckBox->setChecked(true);
-                showSolutionCheckBox->setEnabled(true);
-                showTrueSolutionCheckBox->setChecked(false);
-                showTrueSolutionCheckBox->setEnabled(!results_square.true_solution.empty());
-                showErrorCheckBox->setChecked(false);
-                showErrorCheckBox->setEnabled(!results_square.error.empty());
+                if (params.solver_type == "Основная задача (ступень 2)" && params.use_refined_grid) {
+                    // Проверяем наличие решения на мелкой сетке
+                    if (!results_square.refined_grid_solution.empty() && 
+                        !results_square.refined_grid_x_coords.empty() && 
+                        !results_square.refined_grid_y_coords.empty() && 
+                        !results_square.solution_refined_diff.empty()) {
+                            
+                        // Создаем поверхности с учетом решения на мелкой сетке
+                        squareRegion->createSurfacesWithRefinedGrid(
+                            results_square.solution,
+                            results_square.refined_grid_solution,
+                            results_square.solution_refined_diff,
+                            results_square.x_coords,
+                            results_square.y_coords,
+                            results_square.refined_grid_x_coords,
+                            results_square.refined_grid_y_coords,
+                            params.a_bound, params.b_bound,
+                            params.c_bound, params.d_bound,
+                            decimationFactor
+                        );
+                        
+                        // Настраиваем чекбоксы
+                        showSolutionCheckBox->setChecked(true);
+                        showSolutionCheckBox->setEnabled(true);
+                        showSolutionCheckBox->setText("Показать численное решение v(N)(x,y)");
+                        
+                        showTrueSolutionCheckBox->setChecked(true);  // Устанавливаем в true для активации
+                        showTrueSolutionCheckBox->setEnabled(true);
+                        showTrueSolutionCheckBox->setText("Показать решение v2(N2)(x,y) на сетке с половинным шагом");
+                        
+                        showErrorCheckBox->setChecked(true);  // Устанавливаем в true для активации
+                        showErrorCheckBox->setEnabled(true);
+                        showErrorCheckBox->setText("Показать разность решений v(N) и v2(N2)");
+                        
+                        // Настраиваем обработчики сигналов чекбоксов
+                        // Отключаем текущие соединения
+                        disconnect(showTrueSolutionCheckBox, nullptr, nullptr, nullptr);
+                        disconnect(showErrorCheckBox, nullptr, nullptr, nullptr);
+                        
+                        // Устанавливаем новые соединения используя lambda-выражения
+                        connect(showTrueSolutionCheckBox, &QCheckBox::toggled, this, [squareRegion](bool visible) {
+                            squareRegion->setRefinedGridSolutionVisible(visible);
+                        });
+                        
+                        connect(showErrorCheckBox, &QCheckBox::toggled, this, [squareRegion](bool visible) {
+                            squareRegion->setSolutionRefinedDiffVisible(visible);
+                        });
+                    } else {
+                        // Если нет данных о решении на мелкой сетке, используем стандартный метод
+                        squareRegion->createSurfaces(
+                            results_square.solution,
+                            results_square.true_solution,
+                            results_square.error,
+                            results_square.x_coords,
+                            results_square.y_coords,
+                            params.a_bound, params.b_bound,
+                            params.c_bound, params.d_bound,
+                            decimationFactor
+                        );
+                        
+                        // Настраиваем чекбоксы
+                        showSolutionCheckBox->setChecked(true);
+                        showSolutionCheckBox->setEnabled(true);
+                        showSolutionCheckBox->setText("Показать численное решение v(N)(x,y)");
+                        
+                        showTrueSolutionCheckBox->setChecked(false);
+                        showTrueSolutionCheckBox->setEnabled(false);
+                        showTrueSolutionCheckBox->setText("Показать решение на мелкой сетке (недоступно)");
+                        
+                        showErrorCheckBox->setChecked(false);
+                        showErrorCheckBox->setEnabled(false);
+                        showErrorCheckBox->setText("Показать разность решений (недоступно)");
+                        
+                        // Восстанавливаем стандартные обработчики событий
+                        disconnect(showTrueSolutionCheckBox, nullptr, nullptr, nullptr);
+                        disconnect(showErrorCheckBox, nullptr, nullptr, nullptr);
+                        
+                        connect(showTrueSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onTrueSolutionSeriesVisibilityChanged);
+                        connect(showErrorCheckBox, &QCheckBox::toggled, this, &MainWindow::onErrorSeriesVisibilityChanged);
+                    }
+                } else if (params.solver_type == "Тестовая задача (ступень 2)") {
+                    // Для тестовой задачи стандартное поведение
+                    squareRegion->createSurfaces(
+                        results_square.solution,
+                        results_square.true_solution,
+                        results_square.error,
+                        results_square.x_coords,
+                        results_square.y_coords,
+                        params.a_bound, params.b_bound,
+                        params.c_bound, params.d_bound,
+                        decimationFactor
+                    );
+                    
+                    // Настраиваем чекбоксы
+                    showSolutionCheckBox->setChecked(true);
+                    showSolutionCheckBox->setEnabled(true);
+                    showSolutionCheckBox->setText("Показать численное решение");
+                    
+                    showTrueSolutionCheckBox->setChecked(false);
+                    showTrueSolutionCheckBox->setEnabled(!results_square.true_solution.empty());
+                    showTrueSolutionCheckBox->setText("Показать точное решение u*(x,y)");
+                    
+                    showErrorCheckBox->setChecked(false);
+                    showErrorCheckBox->setEnabled(!results_square.error.empty());
+                    showErrorCheckBox->setText("Показать разность точного и численного решения");
+                    
+                    // Восстанавливаем стандартные обработчики событий
+                    disconnect(showTrueSolutionCheckBox, nullptr, nullptr, nullptr);
+                    disconnect(showErrorCheckBox, nullptr, nullptr, nullptr);
+                    
+                    connect(showTrueSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onTrueSolutionSeriesVisibilityChanged);
+                    connect(showErrorCheckBox, &QCheckBox::toggled, this, &MainWindow::onErrorSeriesVisibilityChanged);
+                }
                 
                 showHeatMapButton->setEnabled(true);
                 decimationFactorSpinBox->setEnabled(true);
                 decimationFactorButton->setEnabled(true);
             }
-        } else { // G-Shape Solver
-            // Для G-образного решателя
+        } else { // Ступень 3 - Г-образная область
+            // Для Г-образного решателя
             if (!results.solution.empty()) {
                 // Создаем объект региона, если он еще не создан или имеет неверный тип
                 if (!shapeRegion || !dynamic_cast<GShapeRegion*>(shapeRegion.get())) {
@@ -1194,10 +1291,22 @@ void MainWindow::createOrUpdate3DSurfaces() {
                 // Настраиваем элементы управления
                 showSolutionCheckBox->setChecked(true);
                 showSolutionCheckBox->setEnabled(true);
+                showSolutionCheckBox->setText("Показать численное решение");
+                
                 showTrueSolutionCheckBox->setChecked(false);
-                showTrueSolutionCheckBox->setEnabled(true);
+                showTrueSolutionCheckBox->setEnabled(!results.true_solution.empty());
+                showTrueSolutionCheckBox->setText("Показать точное решение");
+                
                 showErrorCheckBox->setChecked(false);
-                showErrorCheckBox->setEnabled(true);
+                showErrorCheckBox->setEnabled(!results.error.empty());
+                showErrorCheckBox->setText("Показать разность решений");
+                
+                // Восстанавливаем стандартные обработчики событий
+                disconnect(showTrueSolutionCheckBox, nullptr, nullptr, nullptr);
+                disconnect(showErrorCheckBox, nullptr, nullptr, nullptr);
+                
+                connect(showTrueSolutionCheckBox, &QCheckBox::toggled, this, &MainWindow::onTrueSolutionSeriesVisibilityChanged);
+                connect(showErrorCheckBox, &QCheckBox::toggled, this, &MainWindow::onErrorSeriesVisibilityChanged);
                 
                 showHeatMapButton->setEnabled(true);
                 decimationFactorSpinBox->setEnabled(true);

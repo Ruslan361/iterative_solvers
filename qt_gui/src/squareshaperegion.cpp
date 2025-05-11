@@ -124,6 +124,109 @@ void SquareShapeRegion::setErrorSurfaceVisible(bool visible) {
     }
 }
 
+// Методы для работы с решением на более мелкой сетке
+
+void SquareShapeRegion::setRefinedGridSolutionVisible(bool visible) {
+    if (m_refinedGridSolutionSeries) {
+        m_refinedGridSolutionSeries->setVisible(visible);
+        updateDynamicAxesRanges();
+    }
+}
+
+void SquareShapeRegion::setSolutionRefinedDiffVisible(bool visible) {
+    if (m_solutionRefinedDiffSeries) {
+        m_solutionRefinedDiffSeries->setVisible(visible);
+        updateDynamicAxesRanges();
+    }
+}
+
+bool SquareShapeRegion::createSurfacesWithRefinedGrid(
+    const std::vector<double>& numericalSolution,
+    const std::vector<double>& refinedGridSolution,
+    const std::vector<double>& solutionRefinedDiff,
+    const std::vector<double>& xCoords,
+    const std::vector<double>& yCoords,
+    const std::vector<double>& refinedGridXCoords,
+    const std::vector<double>& refinedGridYCoords,
+    double domainXMin, double domainXMax,
+    double domainYMin, double domainYMax,
+    int decimationFactor)
+{
+    // Очистка предыдущих поверхностей
+    clearAllSurfaces();
+
+    // Проверка входных данных
+    if (numericalSolution.empty() || xCoords.empty() || yCoords.empty() ||
+        numericalSolution.size() != xCoords.size() || numericalSolution.size() != yCoords.size()) {
+        qDebug() << "SquareShapeRegion::createSurfacesWithRefinedGrid: Incorrect data provided";
+        return false;
+    }
+
+    // Сохраняем границы домена
+    m_currentDomainXMin = domainXMin;
+    m_currentDomainXMax = domainXMax;
+    m_currentDomainYMin = domainYMin;
+    m_currentDomainYMax = domainYMax;
+
+    // Устанавливаем диапазоны осей для графика
+    m_graph3D->axisX()->setRange(domainXMin, domainXMax);
+    m_graph3D->axisZ()->setRange(domainYMin, domainYMax);
+
+    // Сохраняем данные для последующего использования
+    m_lastNumericalSolutionData = numericalSolution;
+
+    // Обновляем диапазоны осей
+    updateAxesRanges(numericalSolution);
+
+    // Создание поверхности численного решения
+    m_solutionSeries = createSquareSurface(
+        numericalSolution,
+        xCoords,
+        yCoords,
+        QColor(0, 0, 255, 255), // Синий цвет
+        "Численное решение v(N)",
+        decimationFactor
+    );
+
+    // Создание поверхности решения на более мелкой сетке (если данные предоставлены)
+    if (!refinedGridSolution.empty() && !refinedGridXCoords.empty() && !refinedGridYCoords.empty()) {
+        m_lastRefinedGridSolutionData = refinedGridSolution;
+        m_refinedGridSolutionSeries = createSquareSurface(
+            refinedGridSolution,
+            refinedGridXCoords,
+            refinedGridYCoords,
+            QColor(0, 255, 0, 200), // Зеленый цвет с прозрачностью
+            "Решение на мелкой сетке v2(2N)",
+            decimationFactor
+        );
+        
+        // Делаем серию решения на мелкой сетке изначально невидимой
+        if (m_refinedGridSolutionSeries) {
+            m_refinedGridSolutionSeries->setVisible(false);
+        }
+    }
+
+    // Создание поверхности разницы между решениями (если данные предоставлены)
+    if (!solutionRefinedDiff.empty() && solutionRefinedDiff.size() == numericalSolution.size()) {
+        m_lastSolutionRefinedDiffData = solutionRefinedDiff;
+        m_solutionRefinedDiffSeries = createSquareSurface(
+            solutionRefinedDiff,
+            xCoords,
+            yCoords,
+            QColor(255, 0, 0, 200), // Красный цвет с прозрачностью
+            "Разница между решениями",
+            decimationFactor
+        );
+        
+        // Делаем серию разницы изначально невидимой
+        if (m_solutionRefinedDiffSeries) {
+            m_solutionRefinedDiffSeries->setVisible(false);
+        }
+    }
+
+    return true;
+}
+
 void SquareShapeRegion::clearAllSurfaces() {
     // Проверяем, что у нас есть объект графика
     if (!m_graph3D) {
@@ -140,11 +243,15 @@ void SquareShapeRegion::clearAllSurfaces() {
     m_solutionSeries = nullptr;
     m_trueSolutionSeries = nullptr;
     m_errorSeries = nullptr;
+    m_refinedGridSolutionSeries = nullptr;
+    m_solutionRefinedDiffSeries = nullptr;
 
     // Очищаем сохраненные данные
     m_lastNumericalSolutionData.clear();
     m_lastTrueSolutionData.clear();
     m_lastErrorData.clear();
+    m_lastRefinedGridSolutionData.clear();
+    m_lastSolutionRefinedDiffData.clear();
 }
 
 void SquareShapeRegion::updateAxesRanges(const std::vector<double>& values) {
@@ -193,6 +300,20 @@ void SquareShapeRegion::updateDynamicAxesRanges() {
 
     if (m_errorSeries && m_errorSeries->isVisible() && !m_lastErrorData.empty()) {
         auto [minIt, maxIt] = std::minmax_element(m_lastErrorData.begin(), m_lastErrorData.end());
+        minVal = std::min(minVal, *minIt);
+        maxVal = std::max(maxVal, *maxIt);
+        dataAvailable = true;
+    }
+
+    if (m_refinedGridSolutionSeries && m_refinedGridSolutionSeries->isVisible() && !m_lastRefinedGridSolutionData.empty()) {
+        auto [minIt, maxIt] = std::minmax_element(m_lastRefinedGridSolutionData.begin(), m_lastRefinedGridSolutionData.end());
+        minVal = std::min(minVal, *minIt);
+        maxVal = std::max(maxVal, *maxIt);
+        dataAvailable = true;
+    }
+
+    if (m_solutionRefinedDiffSeries && m_solutionRefinedDiffSeries->isVisible() && !m_lastSolutionRefinedDiffData.empty()) {
+        auto [minIt, maxIt] = std::minmax_element(m_lastSolutionRefinedDiffData.begin(), m_lastSolutionRefinedDiffData.end());
         minVal = std::min(minVal, *minIt);
         maxVal = std::max(maxVal, *maxIt);
         dataAvailable = true;

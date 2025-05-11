@@ -178,21 +178,22 @@ SquareSolverResults DirichletSolverSquare::solve() {
     if (!grid) {
         throw std::runtime_error("Сетка не инициализирована");
     }
+    // и use_... флаги в true. Это будет полностью переопределено ниже.
+    solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
+    eps_precision, // Можно передать любой из eps, т.к. будет переопределено
+    max_iterations); // Передаем актуальное значение max_iterations
+
+    // Очищаем все критерии останова в MSGSolver, чтобы начать с чистого состояния.
+    solver->clearStoppingCriteria();
+
+// Включаем и настраиваем критерии останова на основе флагов use_..._stopping
+
 
     // Создаем солвер MSGSolver.
     // eps_precision (и другие eps_*) и max_iterations здесь являются членами DirichletSolverSquare.
     // max_iterations будет либо значением из SpinBox, либо INT_MAX, если критерий отключен.
     // eps_precision будет либо значением из SpinBox, либо 0.0, если критерий отключен.
     // Конструктор MSGSolver инициализирует свои внутренние eps_... значения на основе одного параметра eps,
-    // и use_... флаги в true. Это будет полностью переопределено ниже.
-    solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
-                                       eps_precision, // Можно передать любой из eps, т.к. будет переопределено
-                                       max_iterations); // Передаем актуальное значение max_iterations
-
-    // Очищаем все критерии останова в MSGSolver, чтобы начать с чистого состояния.
-    solver->clearStoppingCriteria();
-
-    // Включаем и настраиваем критерии останова на основе флагов use_..._stopping
     // и соответствующих значений eps_... / max_iterations из DirichletSolverSquare.
 
     if (use_precision_stopping) {
@@ -239,7 +240,6 @@ SquareSolverResults DirichletSolverSquare::solve() {
         results.error = computeError(solution);
     }
     
-    // Получаем векторы координат
     // Для квадратной области мы можем напрямую вычислить координаты
     int n_nodes = (n_internal - 1) * (m_internal - 1);
     results.x_coords.resize(n_nodes);
@@ -269,11 +269,20 @@ SquareSolverResults DirichletSolverSquare::solve() {
     
     // Вычисляем ошибку относительно решения на более мелкой сетке, если флаг включен
     if (use_refined_grid_comparison) {
-        results.refined_grid_error = computeRefinedGridError();
+        double refined_grid_error = computeRefinedGridError();
+        results.refined_grid_error = refined_grid_error;
+        
+        // Копируем результаты на мелкой сетке, если они доступны
+        if (refined_grid_results) {
+            results.refined_grid_solution = refined_grid_results->refined_grid_solution;
+            results.solution_refined_diff = refined_grid_results->solution_refined_diff;
+            results.refined_grid_x_coords = refined_grid_results->refined_grid_x_coords;
+            results.refined_grid_y_coords = refined_grid_results->refined_grid_y_coords;
+        }
     } else {
         results.refined_grid_error = -1.0; // Недоступно/не вычислено
     }
-
+    
     // Вызываем обратный вызов завершения, если он установлен
     if (completion_callback) {
         completion_callback(results);
@@ -685,10 +694,9 @@ bool SquareResultsIO::saveMatrixAndRhs(const std::string& filename, const Kokkos
 
 // Вычисление ошибки с использованием решения на более мелкой сетке
 double DirichletSolverSquare::computeRefinedGridError() {
-    // Указатель на решатель для более мелкой сетки
+    // Создаем решатель с теми же параметрами, но удвоенным размером сетки
     std::unique_ptr<DirichletSolverSquare> refined_solver;
     
-    // Создаем решатель с теми же параметрами, но удвоенным размером сетки
     if (exact_solution == nullptr && mu1 && mu2 && mu3 && mu4) {
         // Создаем новый решатель с граничными условиями, если нет точного решения, но есть граничные условия
         refined_solver = std::make_unique<DirichletSolverSquare>(
@@ -731,6 +739,19 @@ double DirichletSolverSquare::computeRefinedGridError() {
     
     // Вычисляем максимальную разницу между решениями в соответствующих точках
     double max_error = 0.0;
+    
+    // Инициализируем или получаем объект для хранения результатов мелкой сетки
+    if (!refined_grid_results) {
+        refined_grid_results = std::make_unique<SquareSolverResults>();
+    }
+    
+    // Сохраняем решение на мелкой сетке и координаты
+    refined_grid_results->refined_grid_solution = refined_results.solution;
+    refined_grid_results->refined_grid_x_coords = refined_results.x_coords;
+    refined_grid_results->refined_grid_y_coords = refined_results.y_coords;
+    
+    // Вычисляем разницу между решениями во всех точках основной сетки
+    refined_grid_results->solution_refined_diff.resize(current_solution.size());
     int idx_current = 0;
     
     // Обходим узлы текущей сетки
@@ -753,8 +774,9 @@ double DirichletSolverSquare::computeRefinedGridError() {
             
             if (idx_refined >= 0 && idx_refined < static_cast<int>(refined_results.solution.size())) {
                 // Вычисляем разницу между решениями
-                double diff = std::abs(current_solution[idx_current] - refined_results.solution[idx_refined]);
-                max_error = std::max(max_error, diff);
+                double diff = current_solution[idx_current] - refined_results.solution[idx_refined];
+                refined_grid_results->solution_refined_diff[idx_current] = diff;
+                max_error = std::max(max_error, std::abs(diff));
             }
             
             idx_current++;
