@@ -11,7 +11,8 @@ enum class StopCriterion {
     PRECISION,         // По точности (норма разности xn и xn-1)
     RESIDUAL,          // По малости невязки
     EXACT_ERROR,       // По норме разности между численным и истинным решением
-    INTERRUPTED        // Прервано пользователем
+    INTERRUPTED,       // Прервано пользователем
+    NUMERICAL_ERROR    // Остановка из-за численной ошибки (например, близкий к нулю знаменатель)
 };
 
 class MSGSolver : public Solver {
@@ -142,6 +143,8 @@ public:
                 return "Достигнута требуемая точность по норме разности с истинным решением";
             case StopCriterion::INTERRUPTED:
                 return "Прервано пользователем";
+            case StopCriterion::NUMERICAL_ERROR:
+                return "Остановка из-за численной ошибки";
             default: 
                 return "Неизвестная причина остановки";
         }

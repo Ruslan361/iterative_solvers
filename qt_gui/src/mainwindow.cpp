@@ -211,6 +211,9 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Устанавливаем и настраиваем 3D визуализацию
     setup3DVisualization();
+    
+    // Настройка вкладки таблицы
+    setupTableTab(); // <<< CALLING THE NEW METHOD HERE
 }
 
 MainWindow::~MainWindow() {
@@ -1320,233 +1323,368 @@ void MainWindow::createOrUpdate3DSurfaces() {
     }
 }
 
-// Методы для управления видимостью поверхностей
-void MainWindow::setNumericalSolutionVisible(bool visible) {
-    if (params.solver_type == "Square Solver") {
-        if (graph3D && !graph3D->seriesList().isEmpty()) {
-            graph3D->seriesList().at(0)->setVisible(visible);
-        }
-    } else {
-        if (shapeRegion) {
-            shapeRegion->setNumericalSolutionVisible(visible);
-        }
-    }
-}
-
-void MainWindow::setTrueSolutionVisible(bool visible) {
-    if (params.solver_type == "G-Shape Solver") {
-        if (shapeRegion) {
-            shapeRegion->setTrueSolutionVisible(visible);
-        }
-    }
-    // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
-}
-
-void MainWindow::setErrorSurfaceVisible(bool visible) {
-    if (params.solver_type == "G-Shape Solver") {
-        if (shapeRegion) {
-            shapeRegion->setErrorSurfaceVisible(visible);
-        }
-    }
-    // Для квадратного решателя эта функция не должна ничего делать, т.к. чекбокс отключен
-}
-
-// Слот для обработки изменения видимости серии численного решения
-void MainWindow::onSolutionSeriesVisibilityChanged(bool visible) {
-    if (shapeRegion) {
-        shapeRegion->setNumericalSolutionVisible(visible);
-    }
-}
-
-// Слот для обработки изменения видимости серии точного решения
-void MainWindow::onTrueSolutionSeriesVisibilityChanged(bool visible) {
-    if (shapeRegion) {
-        shapeRegion->setTrueSolutionVisible(visible);
-    }
-}
-
-// Слот для обработки изменения видимости серии ошибки
-void MainWindow::onErrorSeriesVisibilityChanged(bool visible) {
-    if (shapeRegion) {
-        shapeRegion->setErrorSurfaceVisible(visible);
-    }
-}
-
-// Слот для обработки изменения типа графика
-void MainWindow::onChartTypeChanged(int index) {
-    if (!solveSuccessful) return;
-    
-    const std::vector<double>* dataToPlot = nullptr;
-    
-    if (params.solver_type == "Square Solver" || params.solver_type == "Square Solver (G-shaped solution)") {
-        switch (index) {
-            case 0: // Решение
-                dataToPlot = &results_square.solution;
-                break;
-            case 1: // Ошибка
-                dataToPlot = &results_square.error;
-                break;
-            case 2: // Невязка
-                dataToPlot = &results_square.residual;
-                break;
-        }
-    } else { // G-Shape Solver
-        switch (index) {
-            case 0: // Решение
-                dataToPlot = &results.solution;
-                break;
-            case 1: // Ошибка
-                dataToPlot = &results.error;
-                break;
-            case 2: // Невязка
-                dataToPlot = &results.residual;
-                break;
-        }
+// Функция для генерации CSV-данных с учетом выбранной задачи и прореживания
+QString MainWindow::generateCSVData(int skipFactor) {
+    if (params.solver_type == "Тестовая задача (ступень 2)") {
+        return generateCSVForTestProblem(skipFactor);
+    } else if (params.solver_type == "Основная задача (ступень 2)") {
+        return generateCSVForMainProblem(skipFactor);
+    } else { // Ступень 3
+        return generateCSVForGShapeProblem(skipFactor);
     }
     
-    if (dataToPlot && !dataToPlot->empty()) {
-        updateChart(*dataToPlot);
-    } else {
-        // Если данных нет, очищаем график
-        QChart *chart = new QChart();
-        ui->chartView->setChart(chart);
-        updateSliceControls(); // Обновляем элементы управления срезом
+    return QString();
+}
+
+// Генерация CSV для тестовой задачи (квадратная область)
+QString MainWindow::generateCSVForTestProblem(int skipFactor) {
+    if (!solveSuccessful || results_square.solution.empty()) {
+        return QString();
     }
-}
-
-// Stub implementations for missing functions
-void MainWindow::onSaveResultsButtonClicked() {
-    qDebug() << "onSaveResultsButtonClicked called - not implemented yet.";
-    // TODO: Implement saving results functionality
-    QMessageBox::information(this, "Not Implemented", "Saving results is not yet implemented.");
-}
-
-void MainWindow::onSaveMatrixButtonClicked() {
-       qDebug() << "onSaveMatrixButtonClicked called - not implemented yet.";
-    // TODO: Implement saving matrix functionality
-    QMessageBox::information(this, "Not Implemented", "Saving matrix is not yet implemented.");
-}
-
-void MainWindow::onSaveVisualizationButtonClicked() {
-    qDebug() << "onSaveVisualizationButtonClicked called - not implemented yet.";
-    // TODO: Implement saving visualization functionality
-    QMessageBox::information(this, "Not Implemented", "Saving visualization is not yet implemented.");
-}
-
-void MainWindow::onShowReportButtonClicked() {
-    qDebug() << "onShowReportButtonClicked called - not implemented yet.";
-    // TODO: Implement showing report functionality
-    QMessageBox::information(this, "Not Implemented", "Showing report is not yet implemented.");
-}
-
-double MainWindow::u(double x_val, double y_val) {
-    // qDebug() << "u(double, double) called - using placeholder. x:" << x_val << "y:" << y_val;
-    // Placeholder for the true solution function u(x, y).
-    // Replace with the actual formula for the true solution.
-    // Example: return std::sin(M_PI * x_val) * std::cos(M_PI * y_val);
-    return x_val * x_val + y_val * y_val; // A simple placeholder, e.g. x^2 + y^2
-}
-
-double MainWindow::x(int i, int n, double a_bound, double b_bound) {
-    // qDebug() << "x(int, int, double, double) called - using placeholder. i:" << i << "n:" << n;
-    // Calculates the x-coordinate of the i-th grid line (0-indexed internal node).
-    // n is the number of internal divisions along x-axis (n_internal from params).
-    // Grid has n+1 intervals, n internal nodes.
-    if (n <= 0) return a_bound; // Should not happen with valid params.n_internal
-    double hx = (b_bound - a_bound) / (static_cast<double>(n) + 1.0); // Step size
-    return a_bound + static_cast<double>(i) * hx; // i is 1-indexed in some contexts, ensure consistency
-                                                  // Assuming i here is 0 to n-1 for internal points
-                                                  // Or  0 to n+1 for all points including boundary
-                                                  // The call in createTrueSolutionMatrix uses i+1, so i is 0 to n_internal-1
-}
-
-double MainWindow::y(int j, int m, double c_bound, double d_bound) {
-    // qDebug() << "y(int, int, double, double) called - using placeholder. j:" << j << "m:" << m;
-    // Calculates the y-coordinate of the j-th grid line (0-indexed internal node).
-    // m is the number of internal divisions along y-axis (m_internal from params).
-    if (m <= 0) return c_bound; // Should not happen with valid params.m_internal
-    double hy = (d_bound - c_bound) / (static_cast<double>(m) + 1.0); // Step size
-    return c_bound + static_cast<double>(j) * hy; // Similar to x, j is 0 to m_internal-1 from createTrueSolutionMatrix context (j+1)
-}
-
-std::vector<std::vector<double>> MainWindow::solutionTo2D() {
-    qDebug() << "solutionTo2D() called.";
-    std::vector<std::vector<double>> matrix;
-
-    if (params.n_internal <= 0 || params.m_internal <= 0) {
-        qDebug() << "solutionTo2D: Invalid dimensions (n_internal or m_internal <= 0)."; // <<< MODIFIED THIS LINE
-        return matrix; // Return empty matrix
+    
+    QString csvData;
+    QTextStream stream(&csvData);
+    
+    int n = params.n_internal;
+    int m = params.m_internal;
+    double a = params.a_bound;
+    double b = params.b_bound;
+    double c = params.c_bound;
+    double d = params.d_bound;
+    
+    // Создаем заголовок с координатами x
+    stream << "y\\x";
+    for (int i = 0; i <= n + 1; i += skipFactor) {
+        double xi = x(i, n, a, b);
+        stream << "," << xi;
     }
-
-    matrix.resize(params.m_internal, std::vector<double>(params.n_internal));
-
-    const std::vector<double>* sol_ptr = nullptr; // <<< ADD THIS LINE
-    if (params.solver_type == "Square Solver") { // <<< ADD THIS BLOCK
-        sol_ptr = &results_square.solution;
-    } else {
-        sol_ptr = &results.solution;
+    stream << "\n";
+    
+    // Заполняем таблицу значениями численного решения u*
+    stream << "u* (численное решение)\n";
+    for (int j = 0; j <= m + 1; j += skipFactor) {
+        double yj = y(j, m, c, d);
+        stream << yj;
+        
+        for (int i = 0; i <= n + 1; i += skipFactor) {
+            int index = j * (n + 2) + i;
+            if (index < results_square.solution.size()) {
+                stream << "," << results_square.solution[index];
+            } else {
+                stream << ",0";
+            }
+        }
+        stream << "\n";
     }
+    
+    // Заполняем таблицу значениями аналитического решения v
+    stream << "\nv (аналитическое решение)\n";
+    for (int j = 0; j <= m + 1; j += skipFactor) {
+        double yj = y(j, m, c, d);
+        stream << yj;
+        
+        for (int i = 0; i <= n + 1; i += skipFactor) {
+            double xi = x(i, n, a, b);
+            double exactValue = exact_solution_exp_x2_y2(xi, yj); // Используем функцию для exp(x²-y²)
+            stream << "," << exactValue;
+        }
+        stream << "\n";
+    }
+    
+    // Заполняем таблицу разности u*-v
+    stream << "\nu*-v (разность решений)\n";
+    for (int j = 0; j <= m + 1; j += skipFactor) {
+        double yj = y(j, m, c, d);
+        stream << yj;
+        
+        for (int i = 0; i <= n + 1; i += skipFactor) {
+            double xi = x(i, n, a, b);
+            int index = j * (n + 2) + i;
+            double numericalValue = (index < results_square.solution.size()) ? results_square.solution[index] : 0;
+            double exactValue = exact_solution_exp_x2_y2(xi, yj);
+            stream << "," << (numericalValue - exactValue);
+        }
+        stream << "\n";
+    }
+    
+    return csvData;
+}
 
-    if (solveSuccessful && sol_ptr && !sol_ptr->empty()) { // <<< MODIFIED THIS LINE
-        if (sol_ptr->size() == static_cast<size_t>(params.n_internal * params.m_internal)) { // <<< MODIFIED THIS LINE
-            for (int r = 0; r < params.m_internal; ++r) {
-                for (int c = 0; c < params.n_internal; ++c) {
-                    matrix[r][c] = (*sol_ptr)[r * params.n_internal + c]; // <<< MODIFIED THIS LINE
+// Генерация CSV для основной задачи
+QString MainWindow::generateCSVForMainProblem(int skipFactor) {
+    if (!solveSuccessful || results_square.solution.empty()) {
+        return QString();
+    }
+    
+    QString csvData;
+    QTextStream stream(&csvData);
+    
+    int n = params.n_internal;
+    int m = params.m_internal;
+    double a = params.a_bound;
+    double b = params.b_bound;
+    double c = params.c_bound;
+    double d = params.d_bound;
+    
+    // Создаем заголовок с координатами x
+    stream << "y\\x";
+    for (int i = 0; i <= n + 1; i += skipFactor) {
+        double xi = x(i, n, a, b);
+        stream << "," << xi;
+    }
+    stream << "\n";
+    
+    // Заполняем таблицу значениями численного решения u*
+    stream << "u* (численное решение)\n";
+    for (int j = 0; j <= m + 1; j += skipFactor) {
+        double yj = y(j, m, c, d);
+        stream << yj;
+        
+        for (int i = 0; i <= n + 1; i += skipFactor) {
+            int index = j * (n + 2) + i;
+            if (index < results_square.solution.size()) {
+                stream << "," << results_square.solution[index];
+            } else {
+                stream << ",NaN"; // Вне индексации
+            }
+        }
+        stream << "\n";
+    }
+    
+    // Заполняем таблицу значениями решения на подробной сетке (если есть)
+    if (!results_square.refined_grid_solution.empty()) {
+        stream << "\nv (численное решение на подробной сетке)\n";
+        int refined_n = 2 * n; // Подробная сетка в 2 раза больше
+        int refined_m = 2 * m;
+        
+        for (int j = 0; j <= refined_m + 1; j += skipFactor) {
+            double yj = y(j, refined_m, c, d);
+            stream << yj;
+            
+            for (int i = 0; i <= refined_n + 1; i += skipFactor) {
+                int index = j * (refined_n + 2) + i;
+                if (index < results_square.refined_grid_solution.size()) {
+                    stream << "," << results_square.refined_grid_solution[index];
+                } else {
+                    stream << ",NaN";
                 }
             }
-            qDebug() << "solutionTo2D: Successfully reshaped solution for type: " << params.solver_type; // <<< MODIFIED THIS LINE
-        } else {
-            qDebug() << "solutionTo2D: Size mismatch for solver type " << params.solver_type << ". Filling with NaN."; // <<< MODIFIED THIS LINE
-            for (int r = 0; r < params.m_internal; ++r) {
-                std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
-            }
+            stream << "\n";
         }
-    } else {
-        qDebug() << "solutionTo2D: Solve not successful or no data available.";
-        // Fill with NaN or handle as needed
-        for (int r = 0; r < params.m_internal; ++r) {
-            std::fill(matrix[r].begin(), matrix[r].end(), std::numeric_limits<double>::quiet_NaN());
+        
+        // Заполняем таблицу разности решений на общих узлах
+        stream << "\nu*-v (разность решений на общих узлах)\n";
+        for (int j = 0; j <= m + 1; j += skipFactor) {
+            double yj = y(j, m, c, d);
+            stream << yj;
+            
+            for (int i = 0; i <= n + 1; i += skipFactor) {
+                int index = j * (n + 2) + i;
+                double val1 = (index < results_square.solution.size()) ? results_square.solution[index] : 0;
+                
+                // Соответствующий индекс на подробной сетке
+                int refined_i = i * 2;
+                int refined_j = j * 2;
+                int refined_index = refined_j * (2 * n + 2) + refined_i;
+                double val2 = (refined_index < results_square.refined_grid_solution.size()) ? 
+                             results_square.refined_grid_solution[refined_index] : 0;
+                
+                stream << "," << (val1 - val2);
+            }
+            stream << "\n";
         }
     }
-
-    return matrix;
+    
+    return csvData;
 }
 
-// Реализация отображения тепловой карты
-void MainWindow::onShowHeatMapClicked() {
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Предупреждение", "Нет данных для отображения тепловой карты.");
+// Генерация CSV для Г-образной задачи
+QString MainWindow::generateCSVForGShapeProblem(int skipFactor) {
+    if (!solveSuccessful || results.solution.empty()) {
+        return QString();
+    }
+    
+    QString csvData;
+    QTextStream stream(&csvData);
+    
+    int n = params.n_internal;
+    int m = params.m_internal;
+    double a = params.a_bound;
+    double b = params.b_bound;
+    double c = params.c_bound;
+    double d = params.d_bound;
+    
+    // Создаем заголовок с координатами x
+    stream << "y\\x";
+    for (size_t i = 0; i < results.x_coords.size(); i += skipFactor) {
+        stream << "," << results.x_coords[i];
+    }
+    stream << "\n";
+    
+    // Заполняем таблицу значениями численного решения u*
+    stream << "u* (численное решение)\n";
+    
+    // Получаем уникальные координаты y
+    std::set<double> unique_y_coords(results.y_coords.begin(), results.y_coords.end());
+    std::vector<double> sorted_y_coords(unique_y_coords.begin(), unique_y_coords.end());
+    std::sort(sorted_y_coords.begin(), sorted_y_coords.end());
+    
+    for (double yj : sorted_y_coords) {
+        stream << yj;
+        
+        for (size_t i = 0; i < results.x_coords.size(); i += skipFactor) {
+            double xi = results.x_coords[i];
+            
+            // Найдем индекс точки с координатами (xi, yj)
+            size_t index = 0;
+            bool found = false;
+            
+            for (size_t k = 0; k < results.x_coords.size(); ++k) {
+                if (std::abs(results.x_coords[k] - xi) < 1e-9 && std::abs(results.y_coords[k] - yj) < 1e-9) {
+                    index = k;
+                    found = true;
+                                       break;
+                }
+            }
+            
+            if (found && index < results.solution.size()) {
+                stream << "," << results.solution[index];
+            } else {
+                stream << ",NaN"; // Нет точки или нет данных
+            }
+        }
+        stream << "\n";
+    }
+    
+    // Если есть данные об ошибке, добавим их
+    if (!results.error.empty() && results.error.size() == results.solution.size()) {
+        stream << "\nОшибка (error)\n";
+        
+        for (double yj : sorted_y_coords) {
+            stream << yj;
+            
+            for (size_t i = 0; i < results.x_coords.size(); i += skipFactor) {
+                double xi = results.x_coords[i];
+                
+                // Найдем индекс точки с координатами (xi, yj)
+                size_t index = 0;
+                bool found = false;
+                
+                for (size_t k = 0; k < results.x_coords.size(); ++k) {
+                    if (std::abs(results.x_coords[k] - xi) < 1e-9 && std::abs(results.y_coords[k] - yj) < 1e-9) {
+                        index = k;
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (found && index < results.error.size()) {
+                    stream << "," << results.error[index];
+                } else {
+                    stream << ",NaN"; // Нет точки или нет данных
+                }
+            }
+            stream << "\n";
+        }
+    }
+    
+    return csvData;
+}
+
+// Обработчик нажатия на кнопку экспорта в CSV
+void MainWindow::onExportCSVButtonClicked() {
+    int skipFactor = skipFactorSpinBox->value();
+    
+    QString csvData = generateCSVData(skipFactor);
+    if (csvData.isEmpty()) {
+        QMessageBox::warning(this, "Предупреждение", "Нет данных для экспорта. Выполните расчет.");
         return;
     }
     
-    try {
-        if (heatMapGenerator) {
-            // Получаем соответствующие данные в зависимости от типа решателя
-            const std::vector<double>* error_ptr = nullptr;
-            const std::vector<double>* x_coords_ptr = nullptr;
-            const std::vector<double>* y_coords_ptr = nullptr;
-            
-            if (params.solver_type == "Square Solver" || params.solver_type == "Square Solver (G-shaped solution)") {
-                error_ptr = &results_square.error;
-                x_coords_ptr = &results_square.x_coords;
-                y_coords_ptr = &results_square.y_coords;
-            } else { // G-Shape Solver
-                error_ptr = &results.error;
-                x_coords_ptr = &results.x_coords;
-                y_coords_ptr = &results.y_coords;
-            }
-            
-            if (error_ptr && !error_ptr->empty() && x_coords_ptr && !x_coords_ptr->empty() && y_coords_ptr && !y_coords_ptr->empty()) {
-                // Создаем и отображаем тепловую карту
-                heatMapGenerator->generateAndShow(*error_ptr, *x_coords_ptr, *y_coords_ptr, 
-                                                params.a_bound, params.b_bound, params.c_bound, params.d_bound);
-            } else {
-                QMessageBox::warning(this, "Предупреждение", 
-                                    "Нет данных об ошибке для отображения тепловой карты.");
-            }
-        }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, "Ошибка", 
-                             QString("Ошибка при создании тепловой карты: %1").arg(e.what()));
+    QString fileName = QFileDialog::getSaveFileName(this, "Сохранить CSV", "", "CSV файлы (*.csv)");
+    if (fileName.isEmpty()) {
+        return;
     }
+    
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, "Ошибка", "Не удалось открыть файл для записи");
+        return;
+    }
+    
+    QTextStream stream(&file);
+    #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        stream.setCodec("UTF-8");
+    #endif
+    stream << csvData;
+    file.close();
+    
+    QMessageBox::information(this, "Экспорт завершен", "Данные успешно экспортированы в " + fileName);
+}
+
+// Обработчик нажатия на кнопку отображения таблицы
+void MainWindow::onShowTableButtonClicked() {
+    int skipFactor = skipFactorSpinBox->value();
+    
+    QString csvData = generateCSVData(skipFactor);
+    if (csvData.isEmpty()) {
+        QMessageBox::warning(this, "Предупреждение", "Нет данных для отображения. Выполните расчет.");
+        return;
+    }
+    
+    populateTableWithData(csvData);
+}
+
+// Обработчик нажатия на кнопку очистки таблицы
+void MainWindow::onClearTableButtonClicked() {
+    dataTable->setRowCount(0);
+    dataTable->setColumnCount(0);
+    tableInfoLabel->setText("Таблица очищена");
+}
+
+// Функция для заполнения таблицы данными из CSV-строки
+void MainWindow::populateTableWithData(const QString& csvData) {
+    QStringList rows = csvData.split('\n', Qt::SkipEmptyParts);
+    if (rows.isEmpty()) {
+        return;
+    }
+    
+    // Разбираем первую строку для определения числа столбцов
+    QStringList headers = rows[0].split(',');
+    int columnCount = headers.size();
+    
+    // Настраиваем таблицу
+    dataTable->setRowCount(rows.size() - 1); // Минус заголовок
+    dataTable->setColumnCount(columnCount);
+    
+    // Устанавливаем заголовки
+    dataTable->setHorizontalHeaderLabels(headers);
+    
+    // Заполняем данные
+    for (int row = 1; row < rows.size(); ++row) {
+        QStringList cells = rows[row].split(',');
+        
+        // Если строка содержит только один элемент, это может быть заголовок новой секции
+        if (cells.size() == 1) {
+            // Пропускаем строки с заголовками секций
+            continue;
+        }
+        
+        for (int col = 0; col < cells.size() && col < columnCount; ++col) {
+            QTableWidgetItem* item = new QTableWidgetItem(cells[col]);
+            
+            // Устанавливаем выравнивание для чисел
+            if (col > 0) { // Предполагаем, что первый столбец содержит метки
+                item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            }
+            
+            dataTable->setItem(row - 1, col, item);
+        }
+    }
+    
+    // Подгоняем размеры столбцов под содержимое
+    dataTable->resizeColumnsToContents();
+    
+    int skipFactor = skipFactorSpinBox->value();
+    tableInfoLabel->setText(QString("Отображены данные с прореженностью: каждый %1-й элемент").arg(skipFactor));
 }

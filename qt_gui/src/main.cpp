@@ -1,25 +1,22 @@
-#include "mainwindow.h"
-
 #include <QApplication>
-#include <QFontDatabase>
+#include <QSurfaceFormat>
+#include "mainwindow_new.h"
 
 int main(int argc, char *argv[])
 {
-    // Инициализация QApplication
-    QApplication app(argc, argv);
+    // Устанавливаем атрибуты для OpenGL
+    QSurfaceFormat format;
+    format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    QSurfaceFormat::setDefaultFormat(format);
     
-    // Загрузка шрифтов (опционально)
-    QFontDatabase::addApplicationFont(":/fonts/OpenSans-Regular.ttf");
+    QApplication a(argc, argv);
     
-    // Устанавливаем название приложения
-    app.setApplicationName("Решатель задачи Дирихле");
-    app.setOrganizationName("Университет");
+    // Создаем и показываем новое главное окно
+    MainWindow w;
+    w.show();
     
-    // Создаем и показываем главное окно
-    MainWindow mainWindow;
-    mainWindow.setWindowTitle("Решатель задачи Дирихле");
-    mainWindow.show();
-    
-    // Запускаем главный цикл приложения
-    return app.exec();
+    return a.exec();
 }

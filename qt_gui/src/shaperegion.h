@@ -73,6 +73,22 @@ public:
      */
     virtual void clearAllSurfaces() = 0;
 
+    /**
+     * @brief Проверяет, находится ли точка в области
+     * @param i Координата i точки
+     * @param j Координата j точки
+     * @return true, если точка находится в области, false в противном случае
+     */
+    virtual bool pointInDomain(int i, int j) { return true; }
+
+    /**
+     * @brief Получает индекс точки в массиве решения
+     * @param i Координата i точки
+     * @param j Координата j точки
+     * @return Индекс точки в массиве решения или -1, если точка не в области
+     */
+    virtual int getIndex(int i, int j) { return i * (i + 1) + j; }
+
 protected:
     Q3DSurface* m_graph3D; ///< Указатель на объект 3D-графика
     

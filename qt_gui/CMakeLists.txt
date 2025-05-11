@@ -22,20 +22,36 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Charts DataVisualization)
 # Добавляем исходные файлы GUI
 set(GUI_SOURCES
     src/main.cpp
-    src/mainwindow.cpp
+    #src/mainwindow.cpp
+    src/mainwindow_new.cpp
     src/gshaperegion.cpp
     src/heatmapgenerator.cpp
     src/shaperegion.cpp
     src/squareshaperegion.cpp
+    src/csvdatagenerator.cpp
+    # Новые модульные компоненты
+    src/tabs/solver_tab_widget.cpp
+    src/tabs/progress_tab_widget.cpp
+    src/tabs/visualization_tab_widget.cpp
+    src/tabs/visualization_3d_tab_widget.cpp
+    src/tabs/table_tab_widget.cpp
 )
 
 # Заголовочные файлы GUI
 set(GUI_HEADERS
-    src/mainwindow.h
+    #src/mainwindow.h
+    src/mainwindow_new.h
     src/gshaperegion.h
     src/heatmapgenerator.h
     src/shaperegion.h
     src/squareshaperegion.h
+    src/csvdatagenerator.h
+    # Новые модульные компоненты
+    src/tabs/solver_tab_widget.h
+    src/tabs/progress_tab_widget.h
+    src/tabs/visualization_tab_widget.h
+    src/tabs/visualization_3d_tab_widget.h
+    src/tabs/table_tab_widget.h
 )
 
 # UI файлы для Qt Designer
@@ -64,6 +80,12 @@ target_link_libraries(dirichlet_gui PRIVATE
     Qt6::Charts
     Qt6::DataVisualization
     dirichlet_solver
+)
+
+# Включаем дополнительные пути для поиска заголовочных файлов
+target_include_directories(dirichlet_gui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tabs
 )
 
 # Если используем Windows, добавляем флаг для создания оконного приложения

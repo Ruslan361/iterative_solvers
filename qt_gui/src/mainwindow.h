@@ -116,6 +116,11 @@ private slots:
     void onSliceIndexChanged(int value);
     void onTabChanged(int index);      // Слот для смены вкладок
     void createOrUpdate3DSurfaces(); // Слот для создания/обновления поверхностей
+    
+    // Новые слоты для работы с таблицами
+    void onExportCSVButtonClicked();
+    void onShowTableButtonClicked();
+    void onClearTableButtonClicked();
 
 private:
     Ui::MainWindow *ui;
@@ -239,6 +244,22 @@ private:
     std::vector<std::vector<double>> solutionTo2DGShape();
     std::vector<std::vector<double>> createTrueSolutionMatrixGShape();
     std::vector<std::vector<double>> createErrorMatrixGShape();
+    
+    // Функции для формирования таблиц и CSV
+    void setupTableTab();
+    QString generateCSVData(int skipFactor);
+    QString generateCSVForTestProblem(int skipFactor);
+    QString generateCSVForMainProblem(int skipFactor);
+    QString generateCSVForGShapeProblem(int skipFactor);
+    void populateTableWithData(const QString& csvData);
+    
+    // Элементы интерфейса для вкладки с таблицей
+    QTableWidget* dataTable;
+    QSpinBox* skipFactorSpinBox;
+    QPushButton* exportCSVButton;
+    QPushButton* showTableButton;
+    QPushButton* clearTableButton;
+    QLabel* tableInfoLabel;
 };
 
 // Forward declarations for external functions from default_functions.cpp

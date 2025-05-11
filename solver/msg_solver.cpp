@@ -152,7 +152,7 @@ KokkosVector MSGSolver::solve() {
             if (std::abs(Az_dot_z) < std::numeric_limits<double>::epsilon()) {
                 std::cerr << "Error: Denominator Az_dot_z for alpha is close to zero at iteration " << iterationsDone + 1
                           << ". Stopping." << std::endl;
-                stop_reason = StopCriterion::ITERATIONS; // Or a new StopCriterion::NUMERICAL_ISSUE
+                stop_reason = StopCriterion::NUMERICAL_ERROR;
                 converged = false;
                 break;
             }
