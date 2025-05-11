@@ -369,8 +369,15 @@ void MainWindow::handleResults(const SolverResults& results)
     );
     visualization3DTab->setSolveSuccessful(true);
     
-    // Подготавливаем данные для таблицы
-    tableTab->setCSVData(generateCSVData(1));
+    // Обновляем данные в таблице (используем прямое заполнение вместо CSV)
+    tableTab->setResultsData(
+        results.solution,
+        results.true_solution,
+        results.error,
+        results.x_coords,
+        results.y_coords,
+        false // G-образная область не является квадратной сеткой
+    );
     
     // Обновляем информацию о решении на вкладке прогресса
     progressTab->updateSolverFinished(
@@ -441,8 +448,24 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
     }
     visualization3DTab->setSolveSuccessful(true);
     
-    // Подготавливаем данные для таблицы
-    tableTab->setCSVData(generateCSVData(1));
+    // Обновляем данные в таблице (используем прямое заполнение вместо CSV)
+    tableTab->setResultsData(
+        this->results_square.solution,
+        this->results_square.true_solution,
+        this->results_square.error,
+        this->results_square.x_coords,
+        this->results_square.y_coords,
+        true // квадратная сетка
+    );
+    
+    // Если есть решение на уточненной сетке, передаем его
+    if (params.use_refined_grid && !this->results_square.refined_grid_solution.empty()) {
+        tableTab->setRefinedGridData(
+            this->results_square.refined_grid_solution,
+            this->results_square.refined_grid_x_coords, 
+            this->results_square.refined_grid_y_coords
+        );
+    }
     
     // Обновляем информацию о решении на вкладке прогресса
     progressTab->updateSolverFinished(
@@ -477,6 +500,9 @@ void MainWindow::onSolverFinished()
     isSolving = false;
     solverTab->setSolveButtonEnabled(true);
     solverTab->setStopButtonEnabled(false);
+    
+    // Явно активируем ComboBox в табличной вкладке
+    tableTab->setDataTypeComboEnabled(true);
     
     // Переключаемся на вкладку визуализации, если решение успешно
     if (solveSuccessful) {
@@ -576,7 +602,46 @@ void MainWindow::onSaveMatrixButtonClicked()
         return;
     }
     
-    QMessageBox::information(this, "Информация", "Функция сохранения матрицы в файл не реализована в данной версии.");
+    QString fileName = QFileDialog::getSaveFileName(this, "Сохранение матрицы и вектора правой части", "", "Текстовые файлы (*.txt)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+    
+    bool result = false;
+    
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        // Для квадратного решателя
+        if (worker && worker->getSolverSquare()) {
+            // Создаем новый солвер с теми же настройками, что и оригинальный
+            auto solver_sq = std::make_unique<DirichletSolverSquare>(
+                params.n_internal, params.m_internal,
+                params.a_bound, params.b_bound,
+                params.c_bound, params.d_bound
+            );
+            
+            // Сохраняем матрицу и вектор правой части в файл
+            result = solver_sq->saveMatrixAndRhsToFile(fileName.toStdString());
+        }
+    } else {
+        // Для G-образного решателя
+        if (worker && worker->getSolver()) {
+            // Создаем новый солвер с теми же настройками, что и оригинальный
+            auto solver = std::make_unique<DirichletSolver>(
+                params.n_internal, params.m_internal,
+                params.a_bound, params.b_bound,
+                params.c_bound, params.d_bound
+            );
+            
+            // Сохраняем матрицу и вектор правой части в файл
+            result = solver->saveMatrixAndRhsToFile(fileName.toStdString());
+        }
+    }
+    
+    if (result) {
+        QMessageBox::information(this, "Успех", "Матрица и вектор правой части сохранены в файл");
+    } else {
+        QMessageBox::critical(this, "Ошибка", "Не удалось сохранить матрицу и вектор правой части в файл");
+    }
 }
 
 void MainWindow::onSaveVisualizationButtonClicked()
@@ -747,7 +812,18 @@ QString MainWindow::generateCSVForTestProblem(int skipFactor)
     }
     
     std::stringstream ss;
-    ss << "X,Y,Numerical Solution,True Solution,Error\n";
+    ss << "X,Y,Numerical Solution";
+    
+    bool hasTrueSolution = !results_square.true_solution.empty();
+    bool hasError = !results_square.error.empty();
+    
+    if (hasTrueSolution) {
+        ss << ",True Solution";
+    }
+    if (hasError) {
+        ss << ",Error";
+    }
+    ss << "\n";
     
     const auto& solution = results_square.solution;
     const auto& x_coords = results_square.x_coords;
@@ -760,20 +836,30 @@ QString MainWindow::generateCSVForTestProblem(int skipFactor)
             ss << x_coords[i] << "," << y_coords[i] << "," 
                << solution[i];
             
-            if (i < true_sol.size()) {
+            if (hasTrueSolution && i < true_sol.size()) {
                 ss << "," << true_sol[i];
-            } else {
+            } else if (hasTrueSolution) {
                 ss << ",";
             }
             
-            if (i < error.size()) {
+            if (hasError && i < error.size()) {
                 ss << "," << error[i];
-            } else {
+            } else if (hasError) {
                 ss << ",";
             }
             
             ss << "\n";
         }
+    }
+    
+    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
+    ss << "\n# SECTIONS\n";
+    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
+    if (hasTrueSolution) {
+        ss << "# TRUE_SOLUTION: Точное решение\n";
+    }
+    if (hasError) {
+        ss << "# ERROR: Ошибка\n";
     }
     
     return QString::fromStdString(ss.str());
@@ -786,7 +872,19 @@ QString MainWindow::generateCSVForMainProblem(int skipFactor)
     }
     
     std::stringstream ss;
-    ss << "X,Y,Numerical Solution,True Solution,Error\n";
+    ss << "X,Y,Numerical Solution";
+    
+    bool hasTrueSolution = !results_square.true_solution.empty();
+    bool hasError = !results_square.error.empty();
+    bool hasRefinedGrid = !results_square.refined_grid_solution.empty();
+    
+    if (hasTrueSolution) {
+        ss << ",True Solution";
+    }
+    if (hasError) {
+        ss << ",Error";
+    }
+    ss << "\n";
     
     const auto& solution = results_square.solution;
     const auto& x_coords = results_square.x_coords;
@@ -799,20 +897,50 @@ QString MainWindow::generateCSVForMainProblem(int skipFactor)
             ss << x_coords[i] << "," << y_coords[i] << "," 
                << solution[i];
             
-            if (i < true_sol.size()) {
+            if (hasTrueSolution && i < true_sol.size()) {
                 ss << "," << true_sol[i];
-            } else {
+            } else if (hasTrueSolution) {
                 ss << ",";
             }
             
-            if (i < error.size()) {
+            if (hasError && i < error.size()) {
                 ss << "," << error[i];
-            } else {
+            } else if (hasError) {
                 ss << ",";
             }
             
             ss << "\n";
         }
+    }
+    
+    // Если есть решение на уточненной сетке, добавляем его как отдельную секцию
+    if (hasRefinedGrid) {
+        ss << "\n# REFINED_GRID_SOLUTION\n";
+        ss << "X,Y,Refined Grid Solution\n";
+        
+        const auto& refined_solution = results_square.refined_grid_solution;
+        const auto& refined_x_coords = results_square.refined_grid_x_coords;
+        const auto& refined_y_coords = results_square.refined_grid_y_coords;
+        
+        for (size_t i = 0; i < refined_solution.size(); i += skipFactor) {
+            if (i < refined_x_coords.size() && i < refined_y_coords.size() && i < refined_solution.size()) {
+                ss << refined_x_coords[i] << "," << refined_y_coords[i] << "," 
+                   << refined_solution[i] << "\n";
+            }
+        }
+    }
+    
+    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
+    ss << "\n# SECTIONS\n";
+    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
+    if (hasTrueSolution) {
+        ss << "# TRUE_SOLUTION: Точное решение\n";
+    }
+    if (hasError) {
+        ss << "# ERROR: Ошибка\n";
+    }
+    if (hasRefinedGrid) {
+        ss << "# REFINED_GRID: Решение на уточненной сетке\n";
     }
     
     return QString::fromStdString(ss.str());
@@ -825,16 +953,54 @@ QString MainWindow::generateCSVForGShapeProblem(int skipFactor)
     }
     
     std::stringstream ss;
-    ss << "X,Y,Numerical Solution\n";
+    ss << "X,Y,Numerical Solution";
+    
+    bool hasTrueSolution = !results.true_solution.empty();
+    bool hasError = !results.error.empty();
+    
+    if (hasTrueSolution) {
+        ss << ",True Solution";
+    }
+    if (hasError) {
+        ss << ",Error";
+    }
+    ss << "\n";
     
     const auto& solution = results.solution;
     const auto& x_coords = results.x_coords;
     const auto& y_coords = results.y_coords;
+    const auto& true_sol = results.true_solution;
+    const auto& error = results.error;
     
     for (size_t i = 0; i < solution.size(); i += skipFactor) {
         if (i < x_coords.size() && i < y_coords.size() && i < solution.size()) {
-            ss << x_coords[i] << "," << y_coords[i] << "," << solution[i] << "\n";
+            ss << x_coords[i] << "," << y_coords[i] << "," 
+               << solution[i];
+            
+            if (hasTrueSolution && i < true_sol.size()) {
+                ss << "," << true_sol[i];
+            } else if (hasTrueSolution) {
+                ss << ",";
+            }
+            
+            if (hasError && i < error.size()) {
+                ss << "," << error[i];
+            } else if (hasError) {
+                ss << ",";
+            }
+            
+            ss << "\n";
         }
+    }
+    
+    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
+    ss << "\n# SECTIONS\n";
+    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
+    if (hasTrueSolution) {
+        ss << "# TRUE_SOLUTION: Точное решение\n";
+    }
+    if (hasError) {
+        ss << "# ERROR: Ошибка\n";
     }
     
     return QString::fromStdString(ss.str());
