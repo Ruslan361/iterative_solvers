@@ -599,7 +599,7 @@ void MainWindow::updateHelpTabInfo() {
                 
                 helpTab->updateTestTaskInfo(
                     params.n_internal, params.m_internal,
-                    params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                    "Метод сопряженных градиентов (CG)",
                     build_method_parameters_string(params, solverTypeStr),
                     params.eps_precision, params.max_iterations,
                     results_square.iterations, results_square.precision,
@@ -616,38 +616,35 @@ void MainWindow::updateHelpTabInfo() {
             
             // For main task in square domain
             if (solveSuccessful && !results_square.solution.empty()) {
-                // Get coordinates of max error if available
-                std::pair<double, double> max_err_coords = {0.0, 0.0};
-                double max_error_val = 0.0;
-                
-                if (!results_square.error.empty() && 
-                    !results_square.x_coords.empty() && 
-                    !results_square.y_coords.empty()) {
-                    
-                    max_err_coords = find_max_abs_value_coords(
-                        results_square.error, 
-                        results_square.x_coords, 
-                        results_square.y_coords
-                    );
-                    
-                    auto it = std::max_element(
-                        results_square.error.begin(), 
-                        results_square.error.end(),
-                        [](double a, double b) { return std::abs(a) < std::abs(b); }
-                    );
-                    
-                    if (it != results_square.error.end()) {
-                        max_error_val = *it;
-                    }
-                }
-                
                 // Check if we have refined grid results
                 bool hasRefinedResults = params.use_refined_grid && 
                                         !results_square.refined_grid_solution.empty();
                 
+                // Find coordinates of max deviation between main and refined grid solutions
+                std::pair<double, double> max_diff_coords = {0.0, 0.0};
+                if (hasRefinedResults && !results_square.solution_refined_diff.empty()) {
+                    // We need to find which main grid point corresponds to the maximum difference
+                    int max_diff_idx = -1;
+                    double max_diff_val = 0.0;
+                    
+                    for (size_t i = 0; i < results_square.solution_refined_diff.size(); ++i) {
+                        if (max_diff_idx == -1 || std::abs(results_square.solution_refined_diff[i]) > max_diff_val) {
+                            max_diff_val = std::abs(results_square.solution_refined_diff[i]);
+                            max_diff_idx = static_cast<int>(i);
+                        }
+                    }
+                    
+                    // If we found a valid maximum difference point
+                    if (max_diff_idx >= 0 && max_diff_idx < static_cast<int>(results_square.x_coords.size()) &&
+                        max_diff_idx < static_cast<int>(results_square.y_coords.size())) {
+                        max_diff_coords.first = results_square.x_coords[max_diff_idx];
+                        max_diff_coords.second = results_square.y_coords[max_diff_idx];
+                    }
+                }
+                
                 helpTab->updateMainTaskInfo(
                     params.n_internal, params.m_internal,
-                    params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                    "Метод сопряженных градиентов (CG)",
                     build_method_parameters_string(params, solverTypeStr),
                     params.eps_precision, params.max_iterations,
                     results_square.iterations, results_square.precision,
@@ -656,7 +653,7 @@ void MainWindow::updateHelpTabInfo() {
                     results_square.initial_residual_norm,
                     
                     // Refined grid parameters
-                    hasRefinedResults ? "Метод минимальных невязок (MSG) на подробной сетке" : "N/A",
+                    hasRefinedResults ? "Метод сопряженных градиентов (CG) на подробной сетке" : "N/A",
                     hasRefinedResults ? "Подробная сетка" : "N/A",
                     params.eps_precision, params.max_iterations * 2, // Doubled for refined grid
                     results_square.refined_grid_iterations, 
@@ -664,7 +661,7 @@ void MainWindow::updateHelpTabInfo() {
                     results_square.refined_grid_residual_norm, 
                     "Max-норма (L∞)",
                     results_square.refined_grid_error,
-                    max_err_coords.first, max_err_coords.second,
+                    max_diff_coords.first, max_diff_coords.second,
                     "Нулевое начальное приближение",
                     results_square.refined_grid_initial_residual_norm
                 );
@@ -702,7 +699,7 @@ void MainWindow::updateHelpTabInfo() {
             
             helpTab->updateShapedTestTaskInfo(
                 params.n_internal, params.m_internal,
-                params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                "Метод сопряженных градиентов (CG)",
                 build_method_parameters_string(params, solverTypeStr),
                 params.eps_precision, params.max_iterations,
                 results.iterations, results.precision,
