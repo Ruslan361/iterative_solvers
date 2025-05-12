@@ -775,6 +775,11 @@ double DirichletSolverSquare::computeRefinedGridError() {
     // Восстанавливаем начальную норму невязки, так как она могла быть перезаписана при копировании
     refined_grid_results->refined_grid_initial_residual_norm = initial_residual;
     
+    // Заполняем недостающие поля из refined_results_data
+    refined_grid_results->refined_grid_iterations = refined_results_data.iterations;
+    refined_grid_results->refined_grid_precision = refined_results_data.precision;
+    refined_grid_results->refined_grid_residual_norm = refined_results_data.residual_norm;
+    
     refined_grid_results->refined_grid_solution = refined_results_data.solution;
     refined_grid_results->refined_grid_x_coords.clear();
     refined_grid_results->refined_grid_y_coords.clear();
