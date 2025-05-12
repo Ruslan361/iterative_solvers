@@ -243,61 +243,76 @@ void ProgressTabWidget::updateChart()
         return;
     }
 
-    // Создаем новый график
     QChart* chart = new QChart();
     chart->setTitle("График сходимости");
 
-    // Создаем серии данных
-    QLineSeries* precisionSeries = new QLineSeries();
-    precisionSeries->setName("Точность");
+    // Создаем серию данных при необходимости
+    QLineSeries* precisionSeries = nullptr;
+    QLineSeries* residualSeries = nullptr;
+    QLineSeries* errorSeries = nullptr;
 
-    QLineSeries* residualSeries = new QLineSeries();
-    residualSeries->setName("Невязка");
-
-    QLineSeries* errorSeries = new QLineSeries();
-    errorSeries->setName("Ошибка");
-
-    // Заполняем серии данными
+    // Если есть валидные данные precision
     for (size_t i = 0; i < iterationHistory.size(); ++i) {
         const auto& data = iterationHistory[i];
-        
-        // Используем логарифмический масштаб для значений
-        precisionSeries->append(data.iteration, data.precision > 0 ? log10(data.precision) : -16);
-        residualSeries->append(data.iteration, data.residual > 0 ? log10(data.residual) : -16);
-        errorSeries->append(data.iteration, data.error > 0 ? log10(data.error) : -16);
+        double val = data.precision;
+        if (std::isfinite(val)) {
+            if (!precisionSeries) {
+                precisionSeries = new QLineSeries();
+                precisionSeries->setName("Точность");
+            }
+            precisionSeries->append(data.iteration, val > 0 ? std::log10(val) : -16);
+        }
+    }
+    // Если есть валидные данные residual
+    for (size_t i = 0; i < iterationHistory.size(); ++i) {
+        const auto& data = iterationHistory[i];
+        double val = data.residual;
+        if (std::isfinite(val)) {
+            if (!residualSeries) {
+                residualSeries = new QLineSeries();
+                residualSeries->setName("Невязка");
+            }
+            residualSeries->append(data.iteration, val > 0 ? std::log10(val) : -16);
+        }
+    }
+    // Если есть валидные данные error
+    for (size_t i = 0; i < iterationHistory.size(); ++i) {
+        const auto& data = iterationHistory[i];
+        double val = data.error;
+        if (std::isfinite(val)) {
+            if (!errorSeries) {
+                errorSeries = new QLineSeries();
+                errorSeries->setName("Ошибка");
+            }
+            errorSeries->append(data.iteration, val > 0 ? std::log10(val) : -16);
+        }
     }
 
-    // Добавляем серии на график
-    chart->addSeries(precisionSeries);
-    chart->addSeries(residualSeries);
-    chart->addSeries(errorSeries);
+    // Добавляем серии на график только если они содержат точки
+    if (precisionSeries) chart->addSeries(precisionSeries);
+    if (residualSeries) chart->addSeries(residualSeries);
+    if (errorSeries) chart->addSeries(errorSeries);
 
-    // Создаем оси
+    // Оси
     QValueAxis* axisX = new QValueAxis();
     axisX->setTitleText("Итерация");
     axisX->setLabelFormat("%d");
-    
+    chart->addAxis(axisX, Qt::AlignBottom);
+
     QValueAxis* axisY = new QValueAxis();
     axisY->setTitleText("log10(значение)");
     axisY->setLabelFormat("%g");
-
-    // Устанавливаем оси для графика
-    chart->addAxis(axisX, Qt::AlignBottom);
     chart->addAxis(axisY, Qt::AlignLeft);
-    
+
     // Привязываем серии к осям
-    precisionSeries->attachAxis(axisX);
-    precisionSeries->attachAxis(axisY);
-    residualSeries->attachAxis(axisX);
-    residualSeries->attachAxis(axisY);
-    errorSeries->attachAxis(axisX);
-    errorSeries->attachAxis(axisY);
+    if (precisionSeries) precisionSeries->attachAxis(axisX), precisionSeries->attachAxis(axisY);
+    if (residualSeries) residualSeries->attachAxis(axisX), residualSeries->attachAxis(axisY);
+    if (errorSeries) errorSeries->attachAxis(axisX), errorSeries->attachAxis(axisY);
 
     // Устанавливаем диапазон осей
-    auto last = iterationHistory.back();
-    axisX->setRange(0, last.iteration + 5);
+    int maxIter = iterationHistory.back().iteration;
+    axisX->setRange(0, maxIter + 5);
     axisY->setRange(-16, 0);
 
-    // Обновляем график в виджете
     chartView->setChart(chart);
 }

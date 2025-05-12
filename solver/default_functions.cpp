@@ -14,7 +14,7 @@ double solution2(double x, double y) {
 
 // Функция правой части уравнения Пуассона для квадратной области с тем же решением, что и в G-образной области
 double function2_square(double x, double y) {
-    return -4 * (x * x + y * y) * std::exp(x * x - y * y);  // Исправлен знак, должен быть минус
+    return 4 * (x * x + y * y) * std::exp(x * x - y * y);  // Исправлен знак, должен быть минус
 }
 
 // Точное решение для квадратной области (такое же, как и для G-образной области)
@@ -54,7 +54,7 @@ double mu4_square_solution2(double x, double y) {
 // Новая функция правой части для квадратной области
 double custom_function_square(double x, double y) {
     if (y == 0) return 0; // Avoid division by zero, though domain y in [1,2]
-    return std::atan(x / y);
+    return -std::atan(x / y);
 }
 
 // Граничные условия для квадратной области [1,2]x[1,2]

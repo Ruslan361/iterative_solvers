@@ -21,6 +21,7 @@
 #include <QAtomicInt> // For thread-safe stop flag
 #include <QDebug> // For qDebug()
 #include <Kokkos_Core.hpp> // For Kokkos::initialize and is_initialized
+#include "dirichlet_solver.hpp" // For ResultsIO and DirichletSolverSquare
 
 // Анонимное пространство имен для вспомогательных функций
 namespace {
@@ -355,7 +356,7 @@ MainWindow::~MainWindow()
     // Очищаем поток построения графиков
     cleanupPlottingThread();
     
-    // Финализируем Kokkos, если мы его инициалировали
+    // Финализируем Kokkос, если мы его инициалировали
     if (Kokkos::is_initialized()) {
         Kokkos::finalize();
     }
@@ -1019,9 +1020,9 @@ void MainWindow::handlePlotData2D(const QVariantMap& data) {
 
 void MainWindow::handlePlotData3D(const QVariantMap& data) {
     updateSolverProgress("Обновление 3D визуализации...");
-    // Извлекаем данные и обновляем visualization3DTab
     bool is_sq_solver = data.value("is_square_solver").toBool();
     bool use_ref_grid = data.value("use_refined_grid").toBool();
+    // extract data
     std::vector<double> sol = data.value("solution").value<std::vector<double>>();
     std::vector<double> true_sol = data.value("true_solution").value<std::vector<double>>();
     std::vector<double> err = data.value("error").value<std::vector<double>>();
@@ -1032,6 +1033,25 @@ void MainWindow::handlePlotData3D(const QVariantMap& data) {
     double c = data.value("c_bound").toDouble();
     double d = data.value("d_bound").toDouble();
 
+    // decimate for G-shaped if too many points
+    if (!is_sq_solver) {
+        size_t N = sol.size();
+        if (N > 10000) {
+            size_t factor = static_cast<size_t>(std::sqrt(static_cast<double>(N) / 10000.0)) + 1;
+            std::vector<double> sol2, true2, err2, x2, y2;
+            for (size_t i = 0; i < N; i += factor) {
+                sol2.push_back(sol[i]);
+                true2.push_back(true_sol.empty() ? 0.0 : true_sol[i]);
+                err2.push_back(err.empty() ? 0.0 : err[i]);
+                x2.push_back(x_c[i]);
+                y2.push_back(y_c[i]);
+            }
+            sol.swap(sol); sol.swap(sol2); sol2.clear(); // Actually replace sol, see below
+            // Actually assign sol=sol2 etc.
+            sol = sol2; true_sol = true2; err = err2; x_c = x2; y_c = y2;
+        }
+    }
+    
     if (is_sq_solver && use_ref_grid && data.contains("refined_grid_solution")) {
         std::vector<double> ref_sol = data.value("refined_grid_solution").value<std::vector<double>>();
         std::vector<double> sol_ref_diff = data.value("solution_refined_diff").value<std::vector<double>>();
@@ -1046,6 +1066,10 @@ void MainWindow::handlePlotData3D(const QVariantMap& data) {
         }
     } else {
         visualization3DTab->createOrUpdate3DSurfaces(sol, true_sol, err, x_c, y_c, a, b, c, d, is_sq_solver, false);
+    }
+    // show initial zero plane for G-shaped
+    if (!is_sq_solver) {
+        visualization3DTab->onInitialApproximationVisibilityChanged(true);
     }
     visualization3DTab->setSolveSuccessful(true);
     updateSolverProgress("3D визуализация обновлена.");
@@ -1100,8 +1124,32 @@ void MainWindow::onSaveResultsButtonClicked() {
 }
 
 void MainWindow::onSaveMatrixButtonClicked() {
-    // Сохранение матрицы пока не реализовано
-    QMessageBox::information(this, "Информация", "Сохранение матрицы не реализовано.");
+    QString baseName = QFileDialog::getSaveFileName(this, "Сохранить CSV матрицы и RHS (два файла)", QString(), "CSV файлы (*.csv)");
+    if (baseName.isEmpty()) return;
+    // Generate CSV contents for matrix and RHS (handles both square and G-shaped)
+    QString matCsv = generateMatrixCSV();
+    QString rhsCsv = generateRHSCSV();
+    // Determine file paths
+    QString matName = baseName + "_A.csv";
+    QString rhsName = baseName + "_b.csv";
+    // Save matrix CSV
+    QFile matFile(matName);
+    if (!matCsv.isEmpty() && matFile.open(QIODevice::WriteOnly)) {
+        matFile.write(matCsv.toUtf8());
+        matFile.close();
+        updateSolverProgress(QString("Матрица сохранена: %1").arg(matName));
+    } else {
+        QMessageBox::warning(this, "Ошибка", "Не удалось сохранить матрицу.");
+    }
+    // Save RHS CSV
+    QFile rhsFile(rhsName);
+    if (!rhsCsv.isEmpty() && rhsFile.open(QIODevice::WriteOnly)) {
+        rhsFile.write(rhsCsv.toUtf8());
+        rhsFile.close();
+        updateSolverProgress(QString("RHS сохранен: %1").arg(rhsName));
+    } else {
+        QMessageBox::warning(this, "Ошибка", "Не удалось сохранить RHS.");
+    }
 }
 
 void MainWindow::onSaveVisualizationButtonClicked() {
@@ -1155,14 +1203,40 @@ QString MainWindow::generateCSVForTestProblem(int skipFactor) {
     QString csv;
     QTextStream out(&csv);
     out << "x,y,solution,true_solution,error\n";
-    int n = results_square.x_coords.size();
+
+    // Check if primary data vectors are present and have consistent sizes.
+    // If not, return CSV with headers only to prevent crashes.
+    if (results_square.x_coords.empty() ||
+        results_square.y_coords.size() != results_square.x_coords.size() ||
+        results_square.solution.size() != results_square.x_coords.size()) {
+        // Optionally, log this situation for debugging.
+        // qDebug() << "CSV generation skipped for test problem: core data missing or mismatched.";
+        return csv;
+    }
+
+    size_t n = results_square.x_coords.size(); // Use size_t for clarity and correctness with std::vector::size()
     skipFactor = qMax(1, skipFactor);
-    for (int i = 0; i < n; i += skipFactor) {
+
+    for (size_t i = 0; i < n; i += skipFactor) { // Use size_t for loop index
         out << results_square.x_coords[i] << ","
             << results_square.y_coords[i] << ","
-            << results_square.solution[i] << ","
-            << results_square.true_solution[i] << ","
-            << results_square.error[i] << "\n";
+            << results_square.solution[i] << ",";
+
+        // Check for true_solution data availability for the current index
+        if (i < results_square.true_solution.size()) {
+            out << results_square.true_solution[i];
+        } else {
+            // Output nothing (empty field) if data is not available for this index
+        }
+        out << ",";
+
+        // Check for error data availability for the current index
+        if (i < results_square.error.size()) {
+            out << results_square.error[i];
+        } else {
+            // Output nothing (empty field) if data is not available for this index
+        }
+        out << "\n";
     }
     return csv;
 }
@@ -1200,77 +1274,171 @@ QString MainWindow::generateCSVForGShapeProblem(int skipFactor) {
     return csv;
 }
 
-// ...existing code...
+// Export matrix A in CSV (row,col,value)
+QString MainWindow::generateMatrixCSV() {
+    QString csv;
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        // Square domain export with proper RHS for test/main tasks
+        // Build solver with correct functions
+        double (*f_func)(double, double) = nullptr;
+        double (*exact_solution_func)(double, double) = nullptr;
+        double (*mu1_func)(double, double) = nullptr;
+        double (*mu2_func)(double, double) = nullptr;
+        double (*mu3_func)(double, double) = nullptr;
+        double (*mu4_func)(double, double) = nullptr;
+        // Select functions based on task type
+        if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
+            f_func = function2_square;
+            exact_solution_func = solution2_square;
+            mu1_func = mu1_square_solution2;
+            mu2_func = mu2_square_solution2;
+            mu3_func = mu3_square_solution2;
+            mu4_func = mu4_square_solution2;
+        } else {
+            f_func = custom_function_square;
+            mu1_func = mu1_square;
+            mu2_func = mu2_square;
+            mu3_func = mu3_square;
+            mu4_func = mu4_square;
+        }
+        // Construct solver
+        DirichletSolverSquare tmp = (exact_solution_func)
+            ? DirichletSolverSquare(params.n_internal, params.m_internal,
+                                   params.a_bound, params.b_bound,
+                                   params.c_bound, params.d_bound,
+                                   f_func, exact_solution_func)
+            : DirichletSolverSquare(params.n_internal, params.m_internal,
+                                   params.a_bound, params.b_bound,
+                                   params.c_bound, params.d_bound,
+                                   f_func, mu1_func, mu2_func, mu3_func, mu4_func);
+        const GridSystemSquare* grid = tmp.getGridSystem();
+        const auto& A = grid->get_matrix();
+        auto row_map = Kokkos::create_mirror_view(A.graph.row_map);
+        auto entries = Kokkos::create_mirror_view(A.graph.entries);
+        auto values = Kokkos::create_mirror_view(A.values);
+        Kokkos::deep_copy(row_map, A.graph.row_map);
+        Kokkos::deep_copy(entries, A.graph.entries);
+        Kokkos::deep_copy(values, A.values);
+
+        int nrows = A.numRows();
+        // Build dense matrix
+        std::vector<std::vector<double>> dense(nrows, std::vector<double>(nrows, 0.0));
+        for (int i = 0; i < nrows; ++i) {
+            int start = row_map(i);
+            int end = row_map(i + 1);
+            for (int k = start; k < end; ++k) {
+                dense[i][entries(k)] = values(k);
+            }
+        }
+
+        // Output CSV: each row as comma-separated values
+        QTextStream out(&csv);
+        for (int i = 0; i < nrows; ++i) {
+            for (int j = 0; j < nrows; ++j) {
+                out << dense[i][j];
+                if (j + 1 < nrows) out << ',';
+            }
+            out << '\n';
+        }
+    } else {
+        // G-shaped domain export: output sparse matrix triplets
+        DirichletSolver tmp(
+            params.n_internal, params.m_internal,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound);
+        const GridSystem* grid = tmp.getGridSystem();
+        const auto& A = grid->get_matrix();
+        auto row_map = Kokkos::create_mirror_view(A.graph.row_map);
+        auto entries = Kokkos::create_mirror_view(A.graph.entries);
+        auto values = Kokkos::create_mirror_view(A.values);
+        Kokkos::deep_copy(row_map, A.graph.row_map);
+        Kokkos::deep_copy(entries, A.graph.entries);
+        Kokkos::deep_copy(values, A.values);
+
+        int nrows = A.numRows();
+        QTextStream out(&csv);
+        out << "row,col,value\n";
+        for (int i = 0; i < nrows; ++i) {
+            int start = row_map(i);
+            int end = row_map(i + 1);
+            for (int k = start; k < end; ++k) {
+                out << i << ',' << entries(k) << ',' << values(k) << '\n';
+            }
+        }
+    }
+    return csv;
+}
+
+// Export RHS vector b in CSV (index,value)
+QString MainWindow::generateRHSCSV() {
+    QString csv;
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        // Square domain RHS with correct functions for test or main task
+        double (*f_func)(double, double) = nullptr;
+        double (*exact_solution_func)(double, double) = nullptr;
+        double (*mu1_func)(double, double) = nullptr;
+        double (*mu2_func)(double, double) = nullptr;
+        double (*mu3_func)(double, double) = nullptr;
+        double (*mu4_func)(double, double) = nullptr;
+        if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
+            f_func = function2_square;
+            exact_solution_func = solution2_square;
+            mu1_func = mu1_square_solution2;
+            mu2_func = mu2_square_solution2;
+            mu3_func = mu3_square_solution2;
+            mu4_func = mu4_square_solution2;
+        } else {
+            f_func = custom_function_square;
+            mu1_func = mu1_square;
+            mu2_func = mu2_square;
+            mu3_func = mu3_square;
+            mu4_func = mu4_square;
+        }
+        DirichletSolverSquare tmp = (exact_solution_func)
+            ? DirichletSolverSquare(params.n_internal, params.m_internal,
+                                   params.a_bound, params.b_bound,
+                                   params.c_bound, params.d_bound,
+                                   f_func, exact_solution_func)
+            : DirichletSolverSquare(params.n_internal, params.m_internal,
+                                   params.a_bound, params.b_bound,
+                                   params.c_bound, params.d_bound,
+                                   f_func, mu1_func, mu2_func, mu3_func, mu4_func);
+        const GridSystemSquare* grid = tmp.getGridSystem();
+        auto b = grid->get_rhs();
+        auto b_host = Kokkos::create_mirror_view(b);
+        Kokkos::deep_copy(b_host, b);
+        QTextStream out(&csv);
+        out << "index,value\n";
+        int n = b_host.extent(0);
+        for (int i = 0; i < n; ++i) {
+            out << i << "," << b_host(i) << "\n";
+        }
+    } else {
+        // G-shaped domain RHS
+        DirichletSolver tmp(
+            params.n_internal, params.m_internal,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound);
+        const GridSystem* grid = tmp.getGridSystem();
+        auto b = grid->get_rhs();
+        auto b_host = Kokkos::create_mirror_view(b);
+        Kokkos::deep_copy(b_host, b);
+        QTextStream out(&csv);
+        out << "index,value\n";
+        int n = b_host.extent(0);
+        for (int i = 0; i < n; ++i) {
+            out << i << "," << b_host(i) << "\n";
+        }
+    }
+    return csv;
+}
+
+// Add extern declaration for mu4_square_solution2 (move here)
+extern double mu4_square_solution2(double x, double y);
+
+// Slot called when the 2D chart type is changed
 void MainWindow::onChartTypeChanged(int index)
 {
-    // Реагируем на изменение типа графика в 2D визуализации
-    if (!solveSuccessful) { // Если нет успешного решения, ничего не делаем
-        // visualizationTab->clear(); // Можно очистить, если нужно
-        return;
-    }
-    
-    updateSolverProgress(QString("Запрос на изменение типа 2D графика на индекс: %1").arg(index));
-
-    // Обновляем график с нужным типом данных
-    // Теперь данные для всех типов графиков должны быть в results_square или results
-    // и переданы в visualizationTab один раз. Переключение должно происходить внутри visualizationTab.
-    // Однако, если visualizationTab ожидает разные наборы данных для updateChart,
-    // то нужно будет вызывать его с соответствующими данными.
-    // Текущая реализация PlottingWorker::process передает все необходимые векторы.
-    // Мы можем либо передать их все в handlePlotData2D и далее в updateChart,
-    // либо здесь заново извлечь из this->results_square / this->results.
-    // Для консистентности с новым подходом, лучше, чтобы visualizationTab сам управлял выбором данных,
-    // если ему переданы все варианты. Если же его API требует явной передачи нужного вектора:
-
-    std::vector<double> data_to_plot;
-    std::vector<double> x_coords_to_plot;
-    std::vector<double> y_coords_to_plot;
-    std::vector<double> true_solution_for_plot; // Обычно только для основного решения
-
-    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
-        x_coords_to_plot = results_square.x_coords;
-        y_coords_to_plot = results_square.y_coords;
-        if (index == 0) { // Решение
-            data_to_plot = results_square.solution;
-            true_solution_for_plot = results_square.true_solution;
-        } else if (index == 1 && !results_square.error.empty()) { // Ошибка
-            data_to_plot = results_square.error;
-        } else if (index == 2 && !results_square.residual.empty()) { // Невязка
-            data_to_plot = results_square.residual;
-        } else {
-            updateSolverProgress("Данные для выбранного типа 2D графика (квадрат) отсутствуют.");
-            visualizationTab->clear(); // Очищаем, если данных нет
-            return;
-        }
-    } else { // G-образная область
-        x_coords_to_plot = results.x_coords;
-        y_coords_to_plot = results.y_coords;
-        if (index == 0) { // Решение
-            data_to_plot = results.solution;
-            true_solution_for_plot = results.true_solution;
-        } else if (index == 1 && !results.error.empty()) { // Ошибка
-            data_to_plot = results.error;
-        } else if (index == 2 && !results.residual.empty()) { // Невязка
-            data_to_plot = results.residual;
-        } else {
-            updateSolverProgress("Данные для выбранного типа 2D графика (G-обр.) отсутствуют.");
-            visualizationTab->clear();
-            return;
-        }
-    }
-
-    if (!data_to_plot.empty()) {
-        visualizationTab->updateChart(
-            data_to_plot,
-            x_coords_to_plot,
-            y_coords_to_plot,
-            true_solution_for_plot,
-            params.a_bound, params.b_bound,
-            params.c_bound, params.d_bound
-        );
-        updateSolverProgress(QString("2D график обновлен для типа: %1.").arg(index));
-    } else {
-        updateSolverProgress(QString("Нет данных для отображения 2D графика типа: %1.").arg(index));
-        visualizationTab->clear();
-    }
+    Q_UNUSED(index);
+    updateSolverProgress(QString("Тип 2D графика изменён: %1").arg(index));
 }

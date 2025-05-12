@@ -66,6 +66,10 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    // Add declarations for CSV generation methods
+    QString generateMatrixCSV();
+    QString generateRHSCSV();
+
 private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();

@@ -33,12 +33,12 @@ void SolverTabWidget::setupUI()
     
     QLabel *nInternalLabel = new QLabel("Внутренние узлы по X:");
     nInternalSpinBox = new QSpinBox();
-    nInternalSpinBox->setRange(4, 10000);
+    nInternalSpinBox->setRange(3, 10000);
     nInternalSpinBox->setValue(30);
     
     QLabel *mInternalLabel = new QLabel("Внутренние узлы по Y:");
     mInternalSpinBox = new QSpinBox();
-    mInternalSpinBox->setRange(4, 10000);
+    mInternalSpinBox->setRange(3, 10000);
     mInternalSpinBox->setValue(30);
     
     gridSizeLayout->addWidget(nInternalLabel, 0, 0);
