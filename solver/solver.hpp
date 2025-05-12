@@ -64,3 +64,19 @@ public:
         return name;
     }
 };
+
+struct SolverResults {
+    std::vector<double> solution;       // Численное решение
+    std::vector<double> true_solution;  // Точное решение (если доступно)
+    std::vector<double> residual;       // Вектор невязки (Ax - b)
+    std::vector<double> error;          // Вектор ошибки (solution - true_solution)
+    std::vector<double> x_coords;       // Координаты X узлов сетки
+    std::vector<double> y_coords;       // Координаты Y узлов сетки
+    int iterations;                     // Количество выполненных итераций
+    bool converged;                     // Флаг сходимости
+    std::string stop_reason;            // Причина останова
+    double residual_norm;               // Норма невязки ||Ax - b||
+    double error_norm;                  // Норма ошибки ||x - x_true||
+    double precision;                   // Достигнутая точность (например, ||x_k - x_{k-1}||)
+    double initial_residual_norm;       // Начальная норма невязки (например, ||b|| или ||Ax_0 - b||)
+};

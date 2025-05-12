@@ -6,6 +6,62 @@
 #include <limits>
 #include <chrono>
 
+// Вспомогательная функция для вычисления скалярного произведения
+double MSGSolver::dot(const KokkosVector& v1, const KokkosVector& v2) const {
+    double result = 0.0;
+    
+    auto v1_host = Kokkos::create_mirror_view(v1);
+    auto v2_host = Kokkos::create_mirror_view(v2);
+    
+    Kokkos::deep_copy(v1_host, v1);
+    Kokkos::deep_copy(v2_host, v2);
+    
+    for (int i = 0; i < v1.extent(0); ++i) {
+        result += v1_host(i) * v2_host(i);
+    }
+    
+    return result;
+}
+
+// Вспомогательная функция для умножения матрицы на вектор A*v
+KokkosVector MSGSolver::multiply(const KokkosCrsMatrix& A, const KokkosVector& v) const {
+    int n = v.extent(0);
+    KokkosVector result("A*v", n);
+    
+    KokkosSparse::spmv("N", 1.0, A, v, 0.0, result);
+    
+    return result;
+}
+
+// Вычисление нормы вектора (Евклидова норма)
+double MSGSolver::norm(const KokkosVector& v) const {
+    return std::sqrt(dot(v, v));
+}
+
+// Вычисление максимальной нормы вектора (максимальный модуль элемента)
+double MSGSolver::max_norm(const KokkosVector& v) const {
+    double max_val = 0.0;
+    Kokkos::parallel_reduce(v.extent(0), KOKKOS_LAMBDA(const int i, double& lmax) {
+        double val = Kokkos::abs(v(i));
+        if (val > lmax) {
+            lmax = val;
+        }
+    }, Kokkos::Max<double>(max_val));
+    return max_val;
+}
+
+// Implementation of the new utility function for max norm calculation
+double calculate_max_norm(const KokkosVector& v) {
+    double max_val = 0.0;
+    Kokkos::parallel_reduce(v.extent(0), KOKKOS_LAMBDA(const int i, double& lmax) {
+        double val = Kokkos::abs(v(i));
+        if (val > lmax) {
+            lmax = val;
+        }
+    }, Kokkos::Max<double>(max_val));
+    return max_val;
+}
+
 // Функция для проверки условий завершения итераций
 bool MSGSolver::checkTerminationConditions(double precision_max_norm, double r_max_norm,
                                           double error_max_norm, int iterationsDone,
@@ -280,52 +336,6 @@ KokkosVector MSGSolver::solve() {
     }
     
     return x;
-}
-
-// Вспомогательная функция для вычисления скалярного произведения
-double MSGSolver::dot(const KokkosVector& v1, const KokkosVector& v2) const {
-    double result = 0.0;
-    
-    auto v1_host = Kokkos::create_mirror_view(v1);
-    auto v2_host = Kokkos::create_mirror_view(v2);
-    
-    Kokkos::deep_copy(v1_host, v1);
-    Kokkos::deep_copy(v2_host, v2);
-    
-    for (int i = 0; i < v1.extent(0); ++i) {
-        result += v1_host(i) * v2_host(i);
-    }
-    
-    return result;
-}
-
-// Вспомогательная функция для умножения матрицы на вектор A*v
-KokkosVector MSGSolver::multiply(const KokkosCrsMatrix& A, const KokkosVector& v) const {
-    int n = v.extent(0);
-    KokkosVector result("A*v", n);
-    
-    KokkosSparse::spmv("N", 1.0, A, v, 0.0, result);
-    
-    return result;
-}
-
-// Вычисление нормы вектора (Евклидова норма)
-double MSGSolver::norm(const KokkosVector& v) const {
-    return std::sqrt(dot(v, v));
-}
-
-// Вычисление максимальной нормы вектора (максимальный модуль элемента)
-double MSGSolver::max_norm(const KokkosVector& v) const {
-    double max_val = 0.0;
-    
-    auto v_host = Kokkos::create_mirror_view(v);
-    Kokkos::deep_copy(v_host, v);
-    
-    for (int i = 0; i < v.extent(0); ++i) {
-        max_val = std::max(max_val, std::abs(v_host(i)));
-    }
-    
-    return max_val;
 }
 
 // Генерация отчета о решении

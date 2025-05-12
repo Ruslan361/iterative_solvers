@@ -35,6 +35,7 @@ set(GUI_SOURCES
     src/tabs/visualization_tab_widget.cpp
     src/tabs/visualization_3d_tab_widget.cpp
     src/tabs/table_tab_widget.cpp
+    src/tabs/help_tab_widget.cpp
 )
 
 # Заголовочные файлы GUI
@@ -52,6 +53,7 @@ set(GUI_HEADERS
     src/tabs/visualization_tab_widget.h
     src/tabs/visualization_3d_tab_widget.h
     src/tabs/table_tab_widget.h
+    src/tabs/help_tab_widget.h
 )
 
 # UI файлы для Qt Designer

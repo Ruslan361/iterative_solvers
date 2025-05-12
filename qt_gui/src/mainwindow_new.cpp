@@ -10,6 +10,74 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cmath>     // Для std::abs, std::sqrt
+#include <vector>
+#include <algorithm> // Для std::max_element, std::distance
+#include <limits>    // Для std::numeric_limits
+#include <QStringList>
+#include <QLocale>   // Для форматирования чисел
+
+// Анонимное пространство имен для вспомогательных функций
+namespace {
+
+// Функция для поиска координат точки с максимальным абсолютным значением
+std::pair<double, double> find_max_abs_value_coords(
+    const std::vector<double>& values,
+    const std::vector<double>& x_coords,
+    const std::vector<double>& y_coords)
+{
+    if (values.empty() || values.size() != x_coords.size() || values.size() != y_coords.size()) {
+        return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
+    }
+
+    double max_abs_val = 0.0;
+    int max_idx = -1;
+    bool first = true;
+
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (first || std::abs(values[i]) > max_abs_val) {
+            max_abs_val = std::abs(values[i]);
+            max_idx = static_cast<int>(i);
+            first = false;
+        }
+    }
+
+    if (max_idx != -1) {
+        return {x_coords[max_idx], y_coords[max_idx]};
+    }
+    // Если все значения 0 или массив пуст (хотя это уже проверено)
+    return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
+}
+
+// Функция для форматирования числа с заданной точностью или "N/A"
+QString formatDouble(double value, int precision = 2, char format = 'e') {
+    if (value == -1.0 || std::isnan(value) || std::isinf(value)) {
+        return "N/A";
+    }
+    return QLocale().toString(value, format, precision);
+}
+
+// Функция для построения строки с параметрами метода
+QString build_method_parameters_string(const MainWindow::SolverParams& p, const QString& solverType) {
+    QStringList criteria;
+    if (p.use_precision) criteria << QString("Точность (eps=%1)").arg(formatDouble(p.eps_precision));
+    if (p.use_residual) criteria << QString("Невязка (eps=%1)").arg(formatDouble(p.eps_residual));
+    
+    if (p.use_exact_error) {
+         // Для G-образной области и тестовой задачи может быть точное решение
+        if (solverType.contains("Тестовая задача") || solverType.contains("G-образная")) {
+             criteria << QString("Погрешность (с точным реш., eps=%1)").arg(formatDouble(p.eps_exact_error));
+        }
+    }
+    if (p.use_max_iterations) criteria << QString("Макс. итераций (%1)").arg(p.max_iterations);
+
+    if (criteria.isEmpty()) {
+        return "Критерии останова не заданы.";
+    }
+    return "Критерии: " + criteria.join(", ") + ".";
+}
+
+} // конец анонимного пространства имен
 
 // Реализация класса SolverWorker
 SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver)
@@ -77,6 +145,7 @@ MainWindow::MainWindow(QWidget *parent)
     visualizationTab = new VisualizationTabWidget();
     visualization3DTab = new Visualization3DTabWidget();
     tableTab = new TableTabWidget();
+    helpTab = new HelpTabWidget(this); // Создаем вкладку "Справка"
     
     // Добавляем вкладки в контейнер
     tabWidget->addTab(solverTab, "Настройки решателя");
@@ -84,6 +153,7 @@ MainWindow::MainWindow(QWidget *parent)
     tabWidget->addTab(visualizationTab, "Визуализация 2D");
     tabWidget->addTab(visualization3DTab, "3D Визуализация");
     tabWidget->addTab(tableTab, "Таблица");
+    tabWidget->addTab(helpTab, "Справка"); // Добавляем вкладку "Справка"
     
     // Устанавливаем контейнер вкладок как центральный виджет
     setCentralWidget(tabWidget);
@@ -338,18 +408,18 @@ void MainWindow::setupSolver()
     }
 }
 
-void MainWindow::handleResults(const SolverResults& results)
+void MainWindow::handleResults(const SolverResults& res)
 {
     // Сохраняем результаты
-    this->results = results;
+    this->results = res;
     solveSuccessful = true;
     
     // Обновляем визуализацию
     visualizationTab->updateChart(
-        results.solution,
-        results.x_coords,
-        results.y_coords,
-        results.true_solution,
+        res.solution,
+        res.x_coords,
+        res.y_coords,
+        res.true_solution,
         params.a_bound, params.b_bound,
         params.c_bound, params.d_bound
     );
@@ -357,11 +427,11 @@ void MainWindow::handleResults(const SolverResults& results)
     
     // Обновляем 3D визуализацию
     visualization3DTab->createOrUpdate3DSurfaces(
-        results.solution,
-        results.true_solution,
-        results.error,
-        results.x_coords,
-        results.y_coords,
+        res.solution,
+        res.true_solution,
+        res.error,
+        res.x_coords,
+        res.y_coords,
         params.a_bound, params.b_bound,
         params.c_bound, params.d_bound,
         false, // is_square_solver
@@ -371,31 +441,33 @@ void MainWindow::handleResults(const SolverResults& results)
     
     // Обновляем данные в таблице (используем прямое заполнение вместо CSV)
     tableTab->setResultsData(
-        results.solution,
-        results.true_solution,
-        results.error,
-        results.x_coords,
-        results.y_coords,
+        res.solution,
+        res.true_solution,
+        res.error,
+        res.x_coords,
+        res.y_coords,
         false // G-образная область не является квадратной сеткой
     );
     
     // Обновляем информацию о решении на вкладке прогресса
     progressTab->updateSolverFinished(
         solveSuccessful,
-        results.iterations,
-        results.residual_norm,
-        results.error_norm,
-        results.precision,
-        results.converged,
-        results.stop_reason
+        res.iterations,
+        res.residual_norm,
+        res.error_norm,
+        res.precision,
+        res.converged,
+        res.stop_reason
     );
     
     // Обновляем информацию о матрице - здесь нужно убрать обращение к полям matrix_size и nonzero_elements,
     // которых нет в структуре SolverResults
     QString matrixInfo = QString("Размер системы: %1x%1, Ненулевых элементов: %2")
-                        .arg(results.solution.size())  // вместо matrix_size используем размер решения
+                        .arg(res.solution.size())  // вместо matrix_size используем размер решения
                         .arg(0);  // nonzero_elements не доступно, выводим 0
     solverTab->updateMatrixInfo(matrixInfo);
+    
+    updateHelpTabInfo(); // Update help tab after results
 }
 
 void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
@@ -486,7 +558,216 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
                         .arg(matrixSize)
                         .arg(nonZeroElements);
     solverTab->updateMatrixInfo(matrixInfo);
+    
+    updateHelpTabInfo(); // Update help tab after results
 }
+
+void MainWindow::updateHelpTabInfo() {
+    if (!helpTab) return;
+
+    QString solverTypeStr;
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
+            solverTypeStr = "Ступень 2: Тестовая задача (квадрат)";
+            
+            // For test task in square domain
+            if (solveSuccessful && !results_square.solution.empty()) {
+                // Get coordinates of max error if available
+                std::pair<double, double> max_err_coords = {0.0, 0.0};
+                double max_error_val = 0.0;
+                
+                if (!results_square.error.empty() && 
+                    !results_square.x_coords.empty() && 
+                    !results_square.y_coords.empty()) {
+                    
+                    max_err_coords = find_max_abs_value_coords(
+                        results_square.error, 
+                        results_square.x_coords, 
+                        results_square.y_coords
+                    );
+                    
+                    auto it = std::max_element(
+                        results_square.error.begin(), 
+                        results_square.error.end(),
+                        [](double a, double b) { return std::abs(a) < std::abs(b); }
+                    );
+                    
+                    if (it != results_square.error.end()) {
+                        max_error_val = *it;
+                    }
+                }
+                
+                helpTab->updateTestTaskInfo(
+                    params.n_internal, params.m_internal,
+                    params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                    build_method_parameters_string(params, solverTypeStr),
+                    params.eps_precision, params.max_iterations,
+                    results_square.iterations, results_square.precision,
+                    results_square.residual_norm, "Max-норма (L∞)",
+                    results_square.error_norm,
+                    max_err_coords.first, max_err_coords.second,
+                    "Нулевое начальное приближение",
+                    results_square.initial_residual_norm
+                );
+            }
+            
+        } else {
+            solverTypeStr = "Ступень 2: Основная задача (квадрат)";
+            
+            // For main task in square domain
+            if (solveSuccessful && !results_square.solution.empty()) {
+                // Get coordinates of max error if available
+                std::pair<double, double> max_err_coords = {0.0, 0.0};
+                double max_error_val = 0.0;
+                
+                if (!results_square.error.empty() && 
+                    !results_square.x_coords.empty() && 
+                    !results_square.y_coords.empty()) {
+                    
+                    max_err_coords = find_max_abs_value_coords(
+                        results_square.error, 
+                        results_square.x_coords, 
+                        results_square.y_coords
+                    );
+                    
+                    auto it = std::max_element(
+                        results_square.error.begin(), 
+                        results_square.error.end(),
+                        [](double a, double b) { return std::abs(a) < std::abs(b); }
+                    );
+                    
+                    if (it != results_square.error.end()) {
+                        max_error_val = *it;
+                    }
+                }
+                
+                // Check if we have refined grid results
+                bool hasRefinedResults = params.use_refined_grid && 
+                                        !results_square.refined_grid_solution.empty();
+                
+                helpTab->updateMainTaskInfo(
+                    params.n_internal, params.m_internal,
+                    params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                    build_method_parameters_string(params, solverTypeStr),
+                    params.eps_precision, params.max_iterations,
+                    results_square.iterations, results_square.precision,
+                    results_square.residual_norm, "Max-норма (L∞)",
+                    "Нулевое начальное приближение",
+                    results_square.initial_residual_norm,
+                    
+                    // Refined grid parameters
+                    hasRefinedResults ? "Метод минимальных невязок (MSG) на подробной сетке" : "N/A",
+                    hasRefinedResults ? "Подробная сетка" : "N/A",
+                    params.eps_precision, params.max_iterations * 2, // Doubled for refined grid
+                    results_square.refined_grid_iterations, 
+                    hasRefinedResults ? results_square.precision : 0.0,
+                    results_square.refined_grid_residual_norm, 
+                    "Max-норма (L∞)",
+                    results_square.refined_grid_error,
+                    max_err_coords.first, max_err_coords.second,
+                    "Нулевое начальное приближение",
+                    results_square.refined_grid_initial_residual_norm
+                );
+            }
+        }
+    } else {
+        solverTypeStr = "Ступень 3: G-образная область";
+        
+        // For G-shaped domain task
+        if (solveSuccessful && !results.solution.empty()) {
+            // Get coordinates of max error if available
+            std::pair<double, double> max_err_coords = {0.0, 0.0};
+            double max_error_val = 0.0;
+            
+            if (!results.error.empty() && 
+                !results.x_coords.empty() && 
+                !results.y_coords.empty()) {
+                
+                max_err_coords = find_max_abs_value_coords(
+                    results.error, 
+                    results.x_coords, 
+                    results.y_coords
+                );
+                
+                auto it = std::max_element(
+                    results.error.begin(), 
+                    results.error.end(),
+                    [](double a, double b) { return std::abs(a) < std::abs(b); }
+                );
+                
+                if (it != results.error.end()) {
+                    max_error_val = *it;
+                }
+            }
+            
+            helpTab->updateShapedTestTaskInfo(
+                params.n_internal, params.m_internal,
+                params.solver_name.isEmpty() ? "Метод минимальных невязок (MSG)" : params.solver_name,
+                build_method_parameters_string(params, solverTypeStr),
+                params.eps_precision, params.max_iterations,
+                results.iterations, results.precision,
+                results.residual_norm, "Max-норма (L∞)",
+                results.error_norm,
+                max_err_coords.first, max_err_coords.second,
+                "Нулевое начальное приближение",
+                results.initial_residual_norm
+            );
+        }
+    }
+    
+    // If we don't have results yet, clear help text
+    if (!solveSuccessful) {
+        helpTab->clearHelpText();
+    }
+}
+
+void MainWindow::updateMainTaskInfo() {
+    if (!helpTab) return;
+    
+    // This method should use helpTab instead of mainInfoTab
+    // We'll simplify this method to just call updateHelpTabInfo
+    // since that method already contains the necessary logic
+    updateHelpTabInfo();
+}
+
+// Анонимное пространство имен для вспомогательных функций
+namespace {
+
+struct MaxDeviationInfo {
+    double x = 0.0;
+    double y = 0.0;
+    double max_val = -std::numeric_limits<double>::infinity();
+};
+
+MaxDeviationInfo find_max_deviation_info(
+    const std::vector<double>& values,
+    const std::vector<double>& x_coords,
+    const std::vector<double>& y_coords)
+{
+    MaxDeviationInfo info;
+    if (values.empty() || values.size() != x_coords.size() || values.size() != y_coords.size()) {
+        return info; // Возвращаем значения по умолчанию, если данных нет или размеры не совпадают
+    }
+
+    double current_max_abs_val = -1.0; // Используем -1, так как абсолютное значение всегда >= 0
+    int max_idx = -1;
+
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (std::abs(values[i]) > current_max_abs_val) {
+            current_max_abs_val = std::abs(values[i]);
+            max_idx = static_cast<int>(i);
+        }
+    }
+
+    if (max_idx != -1) {
+        info.x = x_coords[max_idx];
+        info.y = y_coords[max_idx];
+        info.max_val = values[max_idx]; // Возвращаем само значение, не абсолютное
+    }
+    return info;
+}
+
+} // конец анонимного пространства имен
 
 void MainWindow::updateIterationInfo(int iteration, double precision, double residual, double error)
 {
@@ -504,9 +785,12 @@ void MainWindow::onSolverFinished()
     // Явно активируем ComboBox в табличной вкладке
     tableTab->setDataTypeComboEnabled(true);
     
-    // Переключаемся на вкладку визуализации, если решение успешно
+    // Обновляем вкладку справки, если решение было успешным
     if (solveSuccessful) {
-        tabWidget->setCurrentWidget(visualizationTab);
+        updateHelpTabInfo(); // Ensure help tab is updated with final results
+        tabWidget->setCurrentWidget(visualizationTab); // Optionally switch to visualization
+    } else {
+        helpTab->clearHelpText(); // Clear help text if solve was not successful or stopped
     }
 }
 

@@ -5,6 +5,9 @@
 #include <functional>
 #include <atomic>
 
+// Declaration of the new utility function for max norm calculation
+double calculate_max_norm(const KokkosVector& v);
+
 // Перечисление критериев остановки
 enum class StopCriterion {
     ITERATIONS,        // По числу итераций
@@ -68,10 +71,12 @@ public:
               int maxIterations = 10000)
         : Solver(a, b, eps, maxIterations, "Метод серединных градиентов"),
           eps_precision(eps), eps_residual(eps), eps_exact_error(eps),
+          use_precision(true), use_residual(true), use_exact_error(true), use_max_iterations(true),
+          exact_solution(),
           converged(false), stop_reason(StopCriterion::ITERATIONS),
           final_residual_norm(0.0), final_error_norm(0.0), final_precision(0.0),
-          stop_requested(false), 
-          use_precision(true), use_residual(true), use_exact_error(true), use_max_iterations(true) {}
+          iteration_callback(),
+          stop_requested(false) {}
     
     // Устанавливает точность для критерия разницы между xn и xn-1
     void setPrecisionEps(double eps) { eps_precision = eps; }

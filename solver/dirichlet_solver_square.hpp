@@ -10,27 +10,38 @@
 
 // Структура для хранения результатов решения для квадратной области
 struct SquareSolverResults {
-    std::vector<double> solution;         // Численное решение
-    std::vector<double> true_solution;    // Точное решение (если доступно)
-    std::vector<double> residual;         // Невязка (Ax - b)
-    std::vector<double> error;            // Ошибка (разница между численным и точным решением)
-    std::vector<double> x_coords;         // Координаты X узлов сетки
-    std::vector<double> y_coords;         // Координаты Y узлов сетки
-    int iterations = 0;                  // Количество итераций
-    bool converged = false;              // Флаг сходимости
-    std::string stop_reason;             // Причина останова
-    double precision = 0.0;              // Достигнутая точность
-    double residual_norm = 0.0;          // Норма невязки
-    double error_norm = 0.0;             // Норма ошибки
-    
-    // Данные для сравнения с более мелкой сеткой
-    double refined_grid_error = -1.0;    // Ошибка относительно решения на мелкой сетке
-    
-    // Новые поля для хранения решения на более мелкой сетке и их разницы
-    std::vector<double> refined_grid_solution;     // Решение на мелкой сетке
-    std::vector<double> solution_refined_diff;     // Разница между решениями
-    std::vector<double> refined_grid_x_coords;     // Координаты X на более мелкой сетке
-    std::vector<double> refined_grid_y_coords;     // Координаты Y на более мелкой сетке
+    std::vector<double> solution;       // Численное решение
+    std::vector<double> true_solution;  // Точное решение (если доступно)
+    std::vector<double> residual;       // Вектор невязки (Ax - b)
+    std::vector<double> error;          // Вектор ошибки (solution - true_solution)
+    std::vector<double> x_coords;       // Координаты X узлов сетки (для основного решения)
+    std::vector<double> y_coords;       // Координаты Y узлов сетки (для основного решения)
+    int iterations;                     // Количество выполненных итераций
+    bool converged;                     // Флаг сходимости
+    std::string stop_reason;            // Причина останова
+    double residual_norm;               // Норма невязки ||Ax - b||
+    double error_norm;                  // Норма ошибки ||x - x_true||
+    double precision;                   // Достигнутая точность (например, ||x_k - x_{k-1}||)
+    double initial_residual_norm;       // Начальная норма невязки (например, ||b|| или ||Ax_0 - b||)
+
+    // Поля для результатов на подробной сетке
+    double refined_grid_error;                        // Норма разности решений (текущее - подробное)
+    int refined_grid_iterations;                    // Итерации на подробной сетке
+    double refined_grid_precision;                  // Точность на подробной сетке
+    double refined_grid_residual_norm;              // Норма невязки на подробной сетке
+    double refined_grid_initial_residual_norm;      // Начальная норма невязки на подробной сетке
+    std::vector<double> refined_grid_solution;      // Решение на подробной сетке
+    std::vector<double> solution_refined_diff;      // Разность между решением на основной и подробной сетке
+    std::vector<double> refined_grid_x_coords;      // Координаты X узлов подробной сетки
+    std::vector<double> refined_grid_y_coords;      // Координаты Y узлов подробной сетки
+
+
+    // Конструктор по умолчанию для инициализации
+    SquareSolverResults() : iterations(0), converged(false), residual_norm(0.0), 
+                          error_norm(0.0), precision(0.0), initial_residual_norm(0.0),
+                          refined_grid_error(-1.0), refined_grid_iterations(0),
+                          refined_grid_precision(0.0), refined_grid_residual_norm(0.0),
+                          refined_grid_initial_residual_norm(0.0) {}
 };
 
 // Класс для работы с решателем уравнения Дирихле в квадратной области
@@ -160,7 +171,7 @@ private:
     KokkosVector true_solution;
     
     // Результаты решения на более мелкой сетке
-    std::unique_ptr<SquareSolverResults> refined_grid_results;
+    std::unique_ptr<SquareSolverResults> refined_grid_results; // Для хранения полных результатов с мелкой сетки
     
     // Функции обратного вызова
     IterationCallbackType iteration_callback;
@@ -170,6 +181,8 @@ private:
     std::vector<double> kokkosToStdVector(const KokkosVector& kv) const;
     KokkosVector computeResidual(const KokkosCrsMatrix& A, const KokkosVector& x, const KokkosVector& b) const;
     std::vector<double> computeError(const KokkosVector& v) const;
+    double calculateSolutionDifferenceNorm(const std::vector<double>& sol1, const GridSystemSquare& grid1,
+                                          const std::vector<double>& sol2, const GridSystemSquare& grid2);
 };
 
 // Класс для ввода/вывода результатов

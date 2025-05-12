@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <Kokkos_StdAlgorithms.hpp> // Для Kokkos::norm
 
 // Конструктор DirichletSolver
 DirichletSolver::DirichletSolver(int n, int m, double a, double b, double c, double d)
@@ -63,77 +64,82 @@ SolverResults DirichletSolver::solve() {
         throw std::runtime_error("Сетка не инициализирована");
     }
     
-    // Создаем солвер с начальными параметрами
-    solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
-                                        eps_residual, max_iterations);
+    // Initialize the SolverResults struct
+    SolverResults current_results;
     
-    // Настраиваем солвер с учетом всех критериев останова
-    solver->clearStoppingCriteria(); // Очистим все критерии, чтобы задать их правильно
-    
-    // Добавляем нужные критерии останова в зависимости от настроек
-    if (use_precision_stopping) {
-        solver->addPrecisionStoppingCriterion(eps_precision);
+    // Get matrix and right-hand side from the grid system
+    const KokkosCrsMatrix& A = grid->get_matrix();
+    const KokkosVector& b = grid->get_rhs();
+
+    // Create solution vector
+    int total_nodes = A.numRows();
+    KokkosVector x_kokkos("solution", total_nodes);
+    Kokkos::deep_copy(x_kokkos, 0.0); // Нулевое начальное приближение
+
+    // Вычисление начальной невязки ||b||
+    auto b_host = Kokkos::create_mirror_view(b);
+    Kokkos::deep_copy(b_host, b);
+    double norm_b = 0.0;
+    for (size_t i = 0; i < b.extent(0); ++i) {
+        norm_b += b_host(i) * b_host(i);
     }
+    current_results.initial_residual_norm = std::sqrt(norm_b);
+
+    solver = std::make_unique<MSGSolver>(A, b);
     
-    if (use_residual_stopping) {
-        solver->addResidualStoppingCriterion(eps_residual);
+    // Настройка параметров solver
+    solver->setPrecisionEps(eps_precision);
+    solver->setResidualEps(eps_residual);
+    solver->setExactErrorEps(eps_exact_error);
+    solver->setMaxIterations(max_iterations);
+    solver->setUsePrecisionStopping(use_precision_stopping);
+    solver->setUseResidualStopping(use_residual_stopping);
+    solver->setUseExactError(use_error_stopping);
+    solver->setUseMaxIterationsStopping(use_max_iterations_stopping);
+
+    // Get true solution if available (for error calculation)
+    KokkosVector true_sol_kokkos = grid->get_true_solution_vector();
+    if (true_sol_kokkos.extent(0) > 0) {
+        solver->setTrueSolution(true_sol_kokkos);
     }
-    
-    if (use_error_stopping) {
-        // Если нужно использовать точное решение для остановки
-        true_solution = grid->get_true_solution_vector();
-        solver->addErrorStoppingCriterion(eps_exact_error, true_solution);
-    }
-    
-    if (use_max_iterations_stopping) {
-        solver->addMaxIterationsStoppingCriterion(max_iterations);
-    }
-    
-    // Устанавливаем колбэк для отслеживания итераций, если он был задан
+
+    // Set callback for iteration updates if available
     if (iteration_callback) {
         solver->setIterationCallback(iteration_callback);
     }
+
+    // Solve the system
+    KokkosVector solution_kokkos = solver->solve();
     
-    // Получаем истинное решение для сравнения (даже если не используется для критерия останова)
-    if (!use_error_stopping) {
-        true_solution = grid->get_true_solution_vector();
+    // Save the solution for later use
+    solution = solution_kokkos;
+    
+    // Update results
+    current_results.solution = kokkosToStdVector(solution_kokkos);
+    current_results.iterations = solver->getIterations();
+    current_results.converged = solver->hasConverged();
+    current_results.stop_reason = solver->getStopReasonText();
+    current_results.residual_norm = solver->getFinalResidualNorm();
+    current_results.precision = solver->getFinalPrecision();
+    
+    // Get coordinates
+    current_results.x_coords = grid->get_x_coords();
+    current_results.y_coords = grid->get_y_coords();
+    
+    // Get true solution if available
+    if (true_sol_kokkos.extent(0) > 0) {
+        true_solution = true_sol_kokkos;
+        current_results.true_solution = kokkosToStdVector(true_sol_kokkos);
+        current_results.error = computeError(solution_kokkos);
+        current_results.error_norm = solver->getFinalErrorNorm();
     }
-    
-    // Решаем СЛАУ
-    solution = solver->solve();
-    
-    // Формируем результаты
-    SolverResults results;
-    results.solution = kokkosToStdVector(solution);
-    results.true_solution = kokkosToStdVector(true_solution);
-    
-    // Вычисляем невязку
-    KokkosVector residual = computeResidual(grid->get_matrix(), solution, grid->get_rhs());
-    results.residual = kokkosToStdVector(residual);
-    
-    // Вычисляем ошибку (разница между точным и численным решением)
-    results.error = computeError(solution);
-    
-    // Получаем векторы координат из GridSystem
-    results.x_coords = grid->get_x_coords();
-    results.y_coords = grid->get_y_coords();
-    
-    // Добавляем информацию о сходимости
-    results.iterations = solver->getIterations();
-    results.converged = solver->hasConverged();
-    results.stop_reason = solver->getStopReasonText();
-    
-    // Добавляем нормы ошибок
-    results.residual_norm = solver->getFinalResidualNorm();
-    results.error_norm = solver->getFinalErrorNorm();
-    results.precision = solver->getFinalPrecision();
-    
-    // Вызываем обратный вызов завершения, если он установлен
+
+    // Call completion callback if set
     if (completion_callback) {
-        completion_callback(results);
+        completion_callback(current_results);
     }
-    
-    return results;
+
+    return current_results;
 }
 
 // Конвертация из Kokkos вектора в std::vector
@@ -147,6 +153,19 @@ std::vector<double> DirichletSolver::kokkosToStdVector(const KokkosVector& kv) c
     }
     
     return result;
+}
+
+// Вычисление невязки ||b||
+double DirichletSolver::computeNorm(const KokkosVector& b) const {
+    double norm = 0.0;
+    auto b_host = Kokkos::create_mirror_view(b);
+    Kokkos::deep_copy(b_host, b);
+    
+    for (size_t i = 0; i < b.extent(0); ++i) {
+        norm += b_host(i) * b_host(i);
+    }
+    
+    return std::sqrt(norm);
 }
 
 // Вычисление невязки Ax-b

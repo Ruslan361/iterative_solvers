@@ -6,6 +6,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <Kokkos_StdAlgorithms.hpp> // Для Kokkos::norm
+#include <cmath> // для std::abs
 
 // Объявления новых функций из default_functions.cpp
 extern double custom_function_square(double x, double y);
@@ -178,6 +180,10 @@ SquareSolverResults DirichletSolverSquare::solve() {
     if (!grid) {
         throw std::runtime_error("Сетка не инициализирована");
     }
+    
+    // Формируем результаты - объявляем в начале метода
+    SquareSolverResults results;
+    
     // и use_... флаги в true. Это будет полностью переопределено ниже.
     solver = std::make_unique<MSGSolver>(grid->get_matrix(), grid->get_rhs(), 
     eps_precision, // Можно передать любой из eps, т.к. будет переопределено
@@ -220,10 +226,14 @@ SquareSolverResults DirichletSolverSquare::solve() {
     // Получаем истинное решение для сравнения, если оно было установлено через addErrorStoppingCriterion
     // или если hasTrueSolution() вернуло true ранее (this->true_solution уже должен быть установлен).
     // MSGSolver::solve() использует свой внутренний exact_solution, если он был установлен.
+    
+    KokkosVector b_copy = grid->get_rhs(); // Копируем вектор правой части
+    double norm_b = KokkosBlas::nrm2(b_copy);
+    results.initial_residual_norm = norm_b; // Сохраняем норму правой части как начальную невязку
+    
     solution = solver->solve();
     
-    // Формируем результаты
-    SquareSolverResults results;
+    // Обновляем результаты (убираем повторное объявление)
     results.solution = kokkosToStdVector(solution);
     
     // Добавляем истинное решение, если оно доступно
@@ -278,6 +288,10 @@ SquareSolverResults DirichletSolverSquare::solve() {
             results.solution_refined_diff = refined_grid_results->solution_refined_diff;
             results.refined_grid_x_coords = refined_grid_results->refined_grid_x_coords;
             results.refined_grid_y_coords = refined_grid_results->refined_grid_y_coords;
+            results.refined_grid_iterations = refined_grid_results->refined_grid_iterations;
+            results.refined_grid_precision = refined_grid_results->refined_grid_precision;
+            results.refined_grid_residual_norm = refined_grid_results->refined_grid_residual_norm;
+            results.refined_grid_initial_residual_norm = refined_grid_results->refined_grid_initial_residual_norm;
         }
     } else {
         results.refined_grid_error = -1.0; // Недоступно/не вычислено
@@ -694,100 +708,192 @@ bool SquareResultsIO::saveMatrixAndRhs(const std::string& filename, const Kokkos
 
 // Вычисление ошибки с использованием решения на более мелкой сетке
 double DirichletSolverSquare::computeRefinedGridError() {
-    // Проверяем, есть ли уже решение на текущей сетке
-    if (solution.extent(0) == 0) {
-        // Если нет, решаем задачу
-        this->solve();
-    }
-    std::vector<double> current_solution = kokkosToStdVector(solution);
+    // Создаем новый экземпляр решателя для более мелкой сетки
+    // Увеличиваем n_internal и m_internal вдвое
+    int refined_n = n_internal * 2;
+    int refined_m = m_internal * 2;
 
-    // Создаем решатель с теми же параметрами, но удвоенным размером сетки
-    std::unique_ptr<DirichletSolverSquare> refined_solver;
-    
-    if (exact_solution == nullptr && mu1 && mu2 && mu3 && mu4) {
-        // Создаем новый решатель с граничными условиями, если нет точного решения, но есть граничные условия
-        refined_solver = std::make_unique<DirichletSolverSquare>(
-            n_internal * 2, m_internal * 2,
-            a_bound, b_bound, c_bound, d_bound,
-            func, mu1, mu2, mu3, mu4
-        );
-    } else {
-        // По умолчанию создаем решатель с точным решением, если оно есть
-        refined_solver = std::make_unique<DirichletSolverSquare>(
-            n_internal * 2, m_internal * 2,
-            a_bound, b_bound, c_bound, d_bound,
-            func, exact_solution
-        );
+    // Сохраняем текущие параметры решателя, чтобы не изменять их для основного решения
+    double current_eps_p = eps_precision;
+    double current_eps_r = eps_residual;
+    double current_eps_e = eps_exact_error;
+    int current_max_iter = max_iterations;
+    bool current_use_p = use_precision_stopping;
+    bool current_use_r = use_residual_stopping;
+    bool current_use_e = use_error_stopping;
+    bool current_use_max_i = use_max_iterations_stopping;
+
+    // Создаем новый решатель для мелкой сетки
+    // Используем те же функции f, mu, exact_solution, что и для основного решателя
+    auto refined_solver = std::make_unique<DirichletSolverSquare>(
+        refined_n, refined_m, a_bound, b_bound, c_bound, d_bound,
+        this->func, this->mu1, this->mu2, this->mu3, this->mu4
+    );
+    // Устанавливаем точное решение, если оно есть
+    if (this->exact_solution) {
+        refined_solver->exact_solution = this->exact_solution;
     }
-    
-    // Настраиваем параметры решателя для более мелкой сетки
-    refined_solver->setSolverParameters(eps_precision, eps_residual, eps_exact_error, max_iterations);
-    refined_solver->setUsePrecisionStopping(use_precision_stopping);
-    refined_solver->setUseResidualStopping(use_residual_stopping);
-    refined_solver->setUseErrorStopping(use_error_stopping);
-    refined_solver->setUseMaxIterationsStopping(use_max_iterations_stopping);
-    refined_solver->setUseRefinedGridComparison(false); // Важно! Отключаем рекурсивное использование мелкой сетки
-    
-    // Решаем задачу на более мелкой сетке
-    SquareSolverResults refined_results = refined_solver->solve();
-    
-    // Получаем координаты текущей сетки
-    double h_x = (b_bound - a_bound) / n_internal;
-    double h_y = (d_bound - c_bound) / m_internal;
-    
-    // Получаем координаты и решение на более мелкой сетке
-    double refined_h_x = (b_bound - a_bound) / (2 * n_internal);
-    double refined_h_y = (d_bound - c_bound) / (2 * m_internal);
-    
-    // Вычисляем максимальную разницу между решениями в соответствующих точках
-    double max_error = 0.0;
-    
-    // Инициализируем или очищаем объект для хранения результатов мелкой сетки
+
+    // Устанавливаем параметры решателя для мелкой сетки (можно использовать те же, что и для основной)
+    refined_solver->setSolverParameters(current_eps_p, current_eps_r, current_eps_e, current_max_iter);
+    refined_solver->setUsePrecisionStopping(current_use_p);
+    refined_solver->setUseResidualStopping(current_use_r);
+    refined_solver->setUseErrorStopping(current_use_e && refined_solver->hasTrueSolution());
+    refined_solver->setUseMaxIterationsStopping(current_use_max_i);
+    refined_solver->setUseRefinedGridComparison(false); // Отключаем рекурсивное сравнение
+
+    // Решаем задачу на мелкой сетке
+    SquareSolverResults refined_results_data = refined_solver->solve();
+
+    // Сохраняем результаты решения на мелкой сетке в refined_grid_results
     if (!refined_grid_results) {
         refined_grid_results = std::make_unique<SquareSolverResults>();
-    } else {
-        // Очищаем предыдущие результаты, чтобы избежать утечек памяти и некорректного поведения
-        refined_grid_results->refined_grid_solution.clear();
-        refined_grid_results->refined_grid_x_coords.clear();
-        refined_grid_results->refined_grid_y_coords.clear();
-        refined_grid_results->solution_refined_diff.clear();
     }
-    
-    // Сохраняем решение на мелкой сетке и координаты
-    refined_grid_results->refined_grid_solution = refined_results.solution;
-    refined_grid_results->refined_grid_x_coords = refined_results.x_coords;
-    refined_grid_results->refined_grid_y_coords = refined_results.y_coords;
-    
-    // Вычисляем разницу между решениями во всех точках основной сетки
-    refined_grid_results->solution_refined_diff.resize(current_solution.size());
-    int idx_current = 0;
-    
-    // Обходим узлы текущей сетки
-    for (int j = 1; j < m_internal; ++j) {
-        for (int i = 1; i < n_internal; ++i) {
-            if (idx_current >= static_cast<int>(current_solution.size())) {
-                continue;  // Проверка выхода за границы
+    *refined_grid_results = refined_results_data; // Копируем данные
+    refined_grid_results->refined_grid_solution = refined_results_data.solution;
+    refined_grid_results->refined_grid_x_coords.clear();
+    refined_grid_results->refined_grid_y_coords.clear();
+
+    double h_x_refined = (b_bound - a_bound) / refined_n;
+    double h_y_refined = (d_bound - c_bound) / refined_m;
+    for (int j = 1; j < refined_m; ++j) {
+        for (int i = 1; i < refined_n; ++i) {
+            refined_grid_results->refined_grid_x_coords.push_back(a_bound + i * h_x_refined);
+            refined_grid_results->refined_grid_y_coords.push_back(c_bound + j * h_y_refined);
+        }
+    }
+
+    // Получаем решение на основной сетке
+    std::vector<double> current_sol_std = kokkosToStdVector(this->solution);
+
+    // Интерполируем решение с основной сетки на узлы мелкой сетки
+    // или выбираем значения из решения на мелкой сетке, соответствующие узлам основной
+    // Для простоты, будем сравнивать значения в узлах, которые есть на обеих сетках.
+    // То есть, каждый второй узел мелкой сетки должен совпадать с узлом основной сетки.
+
+    std::vector<double> diff_vector;
+    refined_grid_results->solution_refined_diff.clear();
+
+    // Предполагаем, что solution (решение на основной сетке) имеет (n_internal-1)*(m_internal-1) точек
+    // refined_results_data.solution (решение на мелкой сетке) имеет (refined_n-1)*(refined_m-1) точек
+
+    // Сравниваем значения в узлах, которые присутствуют на обеих сетках
+    // Узлы основной сетки (i, j) соответствуют узлам (2*i, 2*j) из grid2,
+    // если нумерация узлов начинается с 1.
+    // В реальности, если grid1 (N,M) и grid2 (2N, 2M), то узлы (i,j) из grid1
+    // соответствуют узлам (2*(i+j)-1, 2*(j+1)-1) из grid2 (при правильной нумерации).
+    // Если это не так, или если требуется более общее решение, нужна интерполяция.
+    // Пока возвращаем -1.0, указывая, что вычисление не выполнено или не поддерживается в простом виде.
+
+    double max_abs_diff = 0.0;
+    int main_grid_idx = 0;
+    for (int j_main = 0; j_main < m_internal - 1; ++j_main) {
+        for (int i_main = 0; i_main < n_internal - 1; ++i_main) {
+            // Координаты узла на основной сетке (не индекс, а номер узла)
+            // int node_i_main = i_main + 1;
+            // int node_j_main = j_main + 1;
+
+            // Соответствующий индекс на мелкой сетке
+            // Узел (i_main+1, j_main+1) на основной сетке соответствует
+            // узлу (2*(i_main+1)-1, 2*(j_main+1)-1) в нумерации мелкой сетки, если она тоже с 1.
+            // Или, если индексы с 0: узел (i_main, j_main) на основной (среди внутренних)
+            // соответствует узлу (2*i_main + 1, 2*j_main + 1) на мелкой (среди внутренних).
+            int refined_grid_i_idx = (i_main * 2) + 1; // Индекс столбца на мелкой сетке (0-based)
+            int refined_grid_j_idx = (j_main * 2) + 1; // Индекс строки на мелкой сетке (0-based)
+
+            // Преобразуем 2D индекс мелкой сетки в 1D индекс
+            if (refined_grid_j_idx < refined_m - 1 && refined_grid_i_idx < refined_n - 1) {
+                int refined_1d_idx = refined_grid_j_idx * (refined_n - 1) + refined_grid_i_idx;
+
+                if (static_cast<size_t>(main_grid_idx) < current_sol_std.size() && 
+                    static_cast<size_t>(refined_1d_idx) < refined_results_data.solution.size()) {
+                    double diff = current_sol_std[main_grid_idx] - refined_results_data.solution[refined_1d_idx];
+                    diff_vector.push_back(diff);
+                    refined_grid_results->solution_refined_diff.push_back(diff); 
+                    if (std::abs(diff) > max_abs_diff) {
+                        max_abs_diff = std::abs(diff);
+                    }
+                } else {
+                     // Добавляем 0 или NaN, если индексы выходят за пределы, для сохранения размера
+                     refined_grid_results->solution_refined_diff.push_back(0.0); 
+                }
             }
-            
-            // Вычисляем координаты текущей точки
-            double x = a_bound + i * h_x;
-            double y = c_bound + j * h_y;
-            
-            // Находим соответствующий индекс в массиве решения на мелкой сетке
-            // Для мелкой сетки индексы будут в 2 раза больше
-            int refined_i = i * 2;
-            int refined_j = j * 2;
-            int refined_idx = (refined_j - 1) * (2 * n_internal - 1) + (refined_i - 1);
-            
-            if (refined_idx < static_cast<int>(refined_results.solution.size())) {
-                double diff = std::abs(current_solution[idx_current] - refined_results.solution[refined_idx]);
-                refined_grid_results->solution_refined_diff[idx_current] = diff;
-                max_error = std::max(max_error, diff);
+            main_grid_idx++;
+        }
+    }
+    // Заполняем оставшуюся часть solution_refined_diff нулями или NaN, если ее размер меньше, чем у refined_grid_solution
+    // Это не совсем корректно, так как diff осмыслен только для узлов основной сетки.
+    // Правильнее было бы, чтобы solution_refined_diff имел размер основной сетки.
+    // Переделываем: solution_refined_diff будет содержать разницу в тех же точках, что и основное решение.
+    // refined_grid_results->solution_refined_diff теперь содержит разницу в точках основной сетки.
+
+    // Норма разницы (например, L2 норма)
+    double l2_norm_diff = 0.0;
+    if (!diff_vector.empty()) {
+        for (double val : diff_vector) {
+            l2_norm_diff += val * val;
+        }
+        l2_norm_diff = std::sqrt(l2_norm_diff / diff_vector.size()); // RMSD
+    }
+
+    return l2_norm_diff; // Возвращаем норму разницы
+}
+
+// Добавим вспомогательную функцию для вычисления нормы разности решений
+// Эта функция потребует значительной доработки для корректной интерполяции
+double DirichletSolverSquare::calculateSolutionDifferenceNorm(
+    const std::vector<double>& sol1, const GridSystemSquare& grid1,
+    const std::vector<double>& sol2, const GridSystemSquare& grid2)
+{
+    // Get grid dimensions - since n and m are private and no getters are available,
+    // we'll use the coordinate vectors size to determine the dimensions
+    const auto& x_coords1 = grid1.get_x_coords();
+    const auto& y_coords1 = grid1.get_y_coords();
+    const auto& x_coords2 = grid2.get_x_coords();
+    const auto& y_coords2 = grid2.get_y_coords();
+    
+    // Проверка: если размеры сеток не соотносятся как 1:2 или если массивы решений пусты
+    // вернем -1.0, указывая, что вычисление не выполнено
+    if (x_coords2.size() != 2 * x_coords1.size() || 
+        y_coords2.size() != 2 * y_coords1.size() || 
+        sol1.empty() || sol2.empty()) {
+        return -1.0;
+    }
+
+    // Calculate dimensions based on coordinate vectors
+    int N1 = static_cast<int>(std::sqrt(x_coords1.size()));
+    int M1 = N1;  // Assuming square grid
+    int N2 = static_cast<int>(std::sqrt(x_coords2.size()));
+    int M2 = N2;  // Assuming square grid
+
+    Kokkos::View<double*> diff_kokkos("difference", sol1.size());
+    Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> diff_host(diff_kokkos.data(), diff_kokkos.size());
+
+    size_t k_diff = 0;
+    double sum_sq_diff = 0.0;
+    int valid_points_count = 0;
+
+    for (int j = 0; j <= M1; ++j) { // Итерация по узлам грубой сетки
+        for (int i = 0; i <= N1; ++i) {
+            size_t idx1 = j * (N1 + 1) + i; // Индекс на грубой сетке
+
+            // Соответствующий индекс на подробной сетке (каждый второй узел)
+            int i_refined = i * 2;
+            int j_refined = j * 2;
+            size_t idx2 = j_refined * (N2 + 1) + i_refined;
+
+            if (idx1 < sol1.size() && idx2 < sol2.size()) {
+                double val1 = sol1[idx1];
+                double val2 = sol2[idx2];
+                diff_host(k_diff++) = val1 - val2;
+                sum_sq_diff += (val1 - val2) * (val1 - val2);
+                valid_points_count++;
             }
-            
-            idx_current++;
         }
     }
     
-    return max_error;
+    if (valid_points_count == 0) return -1.0; // Не удалось сравнить точки
+
+    // Вместо Kokkos::norm для std::vector можно использовать std::sqrt(sum_sq_diff)
+    return std::sqrt(sum_sq_diff / valid_points_count); // Евклидова норма разности на узлах грубой сетки
 }

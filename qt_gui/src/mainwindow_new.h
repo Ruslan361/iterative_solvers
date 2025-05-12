@@ -17,6 +17,7 @@
 #include "tabs/visualization_tab_widget.h"
 #include "tabs/visualization_3d_tab_widget.h"
 #include "tabs/table_tab_widget.h"
+#include "tabs/help_tab_widget.h" // Add include for HelpTabWidget
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -58,6 +59,27 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    // Moving SolverParams from private to public
+    struct SolverParams {
+        int n_internal;
+        int m_internal;
+        double a_bound;
+        double b_bound;
+        double c_bound;
+        double d_bound;
+        double eps_precision;
+        double eps_residual;
+        double eps_exact_error;
+        int max_iterations;
+        bool use_precision;
+        bool use_residual;
+        bool use_exact_error;
+        bool use_max_iterations;
+        bool use_refined_grid;
+        QString solver_type;
+        QString solver_name; // Added for method name
+    };
+
 private slots:
     void onSolveButtonClicked();
     void onStopButtonClicked();
@@ -81,6 +103,8 @@ private:
     QString generateCSVForTestProblem(int skipFactor);
     QString generateCSVForMainProblem(int skipFactor);
     QString generateCSVForGShapeProblem(int skipFactor);
+    void updateHelpTabInfo(); // New private method
+    void updateMainTaskInfo(); // Add missing method declaration
 
 private:
     // Модульные компоненты
@@ -89,6 +113,7 @@ private:
     VisualizationTabWidget *visualizationTab;
     Visualization3DTabWidget *visualization3DTab;
     TableTabWidget *tableTab;
+    HelpTabWidget *helpTab; // Add HelpTabWidget instance
     
     // Основной контейнер вкладок
     QTabWidget *tabWidget;
@@ -110,24 +135,7 @@ private:
     bool solveSuccessful = false;
     
     // Параметры решателя
-    struct SolverParams {
-        int n_internal;
-        int m_internal;
-        double a_bound;
-        double b_bound;
-        double c_bound;
-        double d_bound;
-        double eps_precision;
-        double eps_residual;
-        double eps_exact_error;
-        int max_iterations;
-        bool use_precision;
-        bool use_residual;
-        bool use_exact_error;
-        bool use_max_iterations;
-        bool use_refined_grid;
-        QString solver_type;
-    } params;
+    SolverParams params;
 };
 
 // Forward declarations для внешних функций из default_functions.cpp

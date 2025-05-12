@@ -7,21 +7,7 @@
 #include <functional>
 #include <fstream>
 
-// Структура для хранения результатов решения
-struct SolverResults {
-    std::vector<double> solution;         // Решение
-    std::vector<double> true_solution;    // Истинное решение
-    std::vector<double> residual;         // Невязка (Ax - b)
-    std::vector<double> error;            // Ошибка (u - x)
-    std::vector<double> x_coords;         // Координаты X точек решения
-    std::vector<double> y_coords;         // Координаты Y точек решения
-    double residual_norm;                 // Норма невязки
-    double error_norm;                    // Норма ошибки
-    int iterations;                       // Число итераций
-    double precision;                     // Достигнутая точность
-    bool converged;                       // Сошелся ли метод
-    std::string stop_reason;              // Причина остановки
-};
+// Using SolverResults from solver.hpp instead of redefining it
 
 // Класс для работы с файлами результатов
 class ResultsIO {
@@ -123,6 +109,7 @@ private:
     std::vector<double> kokkosToStdVector(const KokkosVector& kv) const;
     KokkosVector computeResidual(const KokkosCrsMatrix& A, const KokkosVector& x, const KokkosVector& b) const;
     std::vector<double> computeError(const KokkosVector& v) const;
+    double computeNorm(const KokkosVector& v) const;
     
     // Методы решения
     SolverResults solveWithMSG();
