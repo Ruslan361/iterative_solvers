@@ -99,6 +99,7 @@ public:
     // Установка функций обратного вызова
     using IterationCallbackType = std::function<void(int, double, double, double)>;
     using CompletionCallbackType = std::function<void(const SquareSolverResults&)>;
+    using ProgressCallbackType = std::function<void(const std::string&)>; // Added
     
     void setIterationCallback(IterationCallbackType callback) {
         iteration_callback = callback;
@@ -107,6 +108,10 @@ public:
     void setCompletionCallback(CompletionCallbackType callback) {
         completion_callback = callback;
     }
+
+    void setProgressCallback(ProgressCallbackType callback) { // Added
+        progress_callback = callback;                         // Added
+    }                                                         // Added
     
     // Проверка доступности точного решения
     bool hasTrueSolution() const {
@@ -176,6 +181,7 @@ private:
     // Функции обратного вызова
     IterationCallbackType iteration_callback;
     CompletionCallbackType completion_callback;
+    ProgressCallbackType progress_callback; // Added
     
     // Вспомогательные методы
     std::vector<double> kokkosToStdVector(const KokkosVector& kv) const;

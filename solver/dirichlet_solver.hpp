@@ -94,6 +94,7 @@ private:
     // Колбэки для отслеживания итераций и завершения
     std::function<void(int, double, double, double)> iteration_callback;
     std::function<void(const SolverResults&)> completion_callback;
+    std::function<void(const std::string&)> progress_callback; // Added
     
     // Система сетки для дискретизации
     std::unique_ptr<GridSystem> grid;
@@ -152,6 +153,9 @@ public:
     void setCompletionCallback(std::function<void(const SolverResults&)> callback) {
         completion_callback = callback;
     }
+    void setProgressCallback(std::function<void(const std::string&)> callback) { // Added
+        progress_callback = callback;                                         // Added
+    }                                                                         // Added
     
     // Решение задачи
     SolverResults solve();

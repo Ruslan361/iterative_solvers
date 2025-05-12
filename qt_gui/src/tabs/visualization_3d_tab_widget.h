@@ -45,7 +45,10 @@ public:
     void clear();
     bool getSolveSuccessful() const { return solveSuccessful; }
     void setSolveSuccessful(bool value) { solveSuccessful = value; }
-    
+
+    // New public method to toggle heat map
+    void toggleHeatMap() { onShowHeatMapButtonClicked(); }
+
 signals:
     void showHeatMapClicked();
     

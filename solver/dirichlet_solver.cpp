@@ -61,9 +61,12 @@ void DirichletSolver::setIterationCallback(std::function<void(int, double, doubl
 // Решение задачи Дирихле
 SolverResults DirichletSolver::solve() {
     if (!grid) {
+        if (progress_callback) progress_callback("Ошибка: Сетка не инициализирована");
         throw std::runtime_error("Сетка не инициализирована");
     }
     
+    if (progress_callback) progress_callback("Начало решения задачи.");
+
     // Initialize the SolverResults struct
     SolverResults current_results;
     
@@ -111,6 +114,8 @@ SolverResults DirichletSolver::solve() {
     // Solve the system
     KokkosVector solution_kokkos = solver->solve();
     
+    if (progress_callback) progress_callback("Система уравнений решена.");
+
     // Save the solution for later use
     solution = solution_kokkos;
     
@@ -139,6 +144,7 @@ SolverResults DirichletSolver::solve() {
         completion_callback(current_results);
     }
 
+    if (progress_callback) progress_callback("Все этапы решения завершены.");
     return current_results;
 }
 

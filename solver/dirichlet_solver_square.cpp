@@ -178,9 +178,12 @@ void DirichletSolverSquare::setSolverParameters(double eps_p, double eps_r, doub
 // Решение задачи Дирихле для квадратной области
 SquareSolverResults DirichletSolverSquare::solve() {
     if (!grid) {
+        if (progress_callback) progress_callback("Ошибка: Сетка не инициализирована");
         throw std::runtime_error("Сетка не инициализирована");
     }
     
+    if (progress_callback) progress_callback("Начало решения на основной сетке (N1).");
+
     // Формируем результаты - объявляем в начале метода
     SquareSolverResults results;
     
@@ -233,6 +236,8 @@ SquareSolverResults DirichletSolverSquare::solve() {
     
     solution = solver->solve();
     
+    if (progress_callback) progress_callback("Решение на основной сетке (N1) завершено.");
+
     // Обновляем результаты (убираем повторное объявление)
     results.solution = kokkosToStdVector(solution);
     
@@ -279,8 +284,10 @@ SquareSolverResults DirichletSolverSquare::solve() {
     
     // Вычисляем ошибку относительно решения на более мелкой сетке, если флаг включен
     if (use_refined_grid_comparison) {
+        if (progress_callback) progress_callback("Начало вычисления ошибки с использованием уточненной сетки.");
         double refined_grid_error = computeRefinedGridError();
         results.refined_grid_error = refined_grid_error;
+        if (progress_callback) progress_callback("Вычисление ошибки с использованием уточненной сетки завершено.");
         
         // Копируем результаты на мелкой сетке, если они доступны
         if (refined_grid_results) {
@@ -302,6 +309,7 @@ SquareSolverResults DirichletSolverSquare::solve() {
         completion_callback(results);
     }
     
+    if (progress_callback) progress_callback("Все этапы решения завершены.");
     return results;
 }
 
@@ -710,6 +718,7 @@ bool SquareResultsIO::saveMatrixAndRhs(const std::string& filename, const Kokkos
 double DirichletSolverSquare::computeRefinedGridError() {
     // Создаем новый экземпляр решателя для более мелкой сетки
     // Увеличиваем n_internal и m_internal вдвое
+    if (progress_callback) progress_callback("Инициализация решателя для уточненной сетки (N2).");
     int refined_n = n_internal * 2;
     int refined_m = m_internal * 2;
 
@@ -744,6 +753,7 @@ double DirichletSolverSquare::computeRefinedGridError() {
 
     // Вычисляем начальную норму невязки для уточненной сетки
     // Получаем матрицу системы и вектор правой части
+    if (progress_callback) progress_callback("Получение параметров для уточненной сетки (N2).");
     const auto& refined_grid = refined_solver->getGridSystem();
     if (refined_grid) {
         KokkosVector b_refined = refined_grid->get_rhs();
@@ -760,7 +770,9 @@ double DirichletSolverSquare::computeRefinedGridError() {
     }
 
     // Решаем задачу на мелкой сетке
+    if (progress_callback) progress_callback("Запуск решения на уточненной сетке (N2).");
     SquareSolverResults refined_results_data = refined_solver->solve();
+    if (progress_callback) progress_callback("Решение на уточненной сетке (N2) завершено.");
 
     // Сохраняем результаты решения на мелкой сетке в refined_grid_results
     if (!refined_grid_results) {
@@ -794,6 +806,7 @@ double DirichletSolverSquare::computeRefinedGridError() {
     }
 
     // Получаем решение на основной сетке
+    if (progress_callback) progress_callback("Вычисление разницы между решениями (N1 и N2).");
     std::vector<double> current_sol_std = kokkosToStdVector(this->solution);
 
     // Интерполируем решение с основной сетки на узлы мелкой сетки
@@ -865,6 +878,7 @@ double DirichletSolverSquare::computeRefinedGridError() {
         }
         l2_norm_diff = std::sqrt(l2_norm_diff / diff_vector.size()); // RMSD
     }
+    if (progress_callback) progress_callback("Вычисление разницы между решениями (N1 и N2) завершено.");
 
     return l2_norm_diff; // Возвращаем норму разницы
 }

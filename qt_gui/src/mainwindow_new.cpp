@@ -16,6 +16,11 @@
 #include <limits>    // Для std::numeric_limits
 #include <QStringList>
 #include <QLocale>   // Для форматирования чисел
+#include <QThread>
+#include <QVariantMap>
+#include <QAtomicInt> // For thread-safe stop flag
+#include <QDebug> // For qDebug()
+#include <Kokkos_Core.hpp> // For Kokkos::initialize and is_initialized
 
 // Анонимное пространство имен для вспомогательных функций
 namespace {
@@ -51,7 +56,7 @@ std::pair<double, double> find_max_abs_value_coords(
 
 // Функция для форматирования числа с заданной точностью или "N/A"
 QString formatDouble(double value, int precision = 2, char format = 'e') {
-    if (value == -1.0 || std::isnan(value) || std::isinf(value)) {
+    if (value == -1.0 || std::isnan(value) || std::isinf(value)) { // Added isnan and isinf checks
         return "N/A";
     }
     return QLocale().toString(value, format, precision);
@@ -80,54 +85,186 @@ QString build_method_parameters_string(const MainWindow::SolverParams& p, const 
 } // конец анонимного пространства имен
 
 // Реализация класса SolverWorker
-SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver)
-    : solver(std::move(solver))
-    , is_square_solver(false)
+SolverWorker::SolverWorker(std::unique_ptr<DirichletSolver> solver_arg, QObject *parent)
+    : QObject(parent), m_solver(std::move(solver_arg)), m_solver_sq(nullptr), m_is_square_solver(false)
 {
 }
 
-SolverWorker::SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq)
-    : solver_sq(std::move(solver_sq))
-    , is_square_solver(true)
+SolverWorker::SolverWorker(std::unique_ptr<DirichletSolverSquare> solver_sq_arg, QObject *parent)
+    : QObject(parent), m_solver(nullptr), m_solver_sq(std::move(solver_sq_arg)), m_is_square_solver(true)
 {
 }
 
 void SolverWorker::process()
 {
     try {
-        if (is_square_solver && solver_sq) {
+        emit solverStageUpdate("Инициализация решателя...");
+        if (m_is_square_solver && m_solver_sq) {
             // Настройка callback для отслеживания итераций
             auto iter_callback = [this](int iter, double precision, double residual, double error) {
+                if (QThread::currentThread()->isInterruptionRequested()){ // Check for interruption before emitting
+                    return false; // Stop solver's internal loop
+                }
                 emit iterationUpdate(iter, precision, residual, error);
-                return true; // Продолжить итерации
+                return !QThread::currentThread()->isInterruptionRequested(); // Continue if not interrupted
             };
-            solver_sq->setIterationCallback(iter_callback);
+            m_solver_sq->setIterationCallback(iter_callback);
+
+            // Настройка callback для стадий решения (должна быть реализована в DirichletSolverSquare)
+            m_solver_sq->setProgressCallback([this](const std::string& msg){
+                if (QThread::currentThread()->isInterruptionRequested()){
+                     // Optionally handle interruption here if progress callback can stop things
+                    return;
+                }
+                emit solverStageUpdate(QString::fromStdString(msg));
+            });
             
-            // Решаем уравнение
-            SquareSolverResults results_sq = solver_sq->solve();
-            emit resultReadySquare(results_sq);
-        } else if (solver) {
+            emit solverStageUpdate("Запуск решения для квадратной области...");
+            SquareSolverResults results_sq_data = m_solver_sq->solve();
+            if (QThread::currentThread()->isInterruptionRequested()) {
+                 emit solverStageUpdate("Решение для квадратной области прервано.");
+                 emit finished();
+                 return;
+            }
+            emit solverStageUpdate("Решение для квадратной области завершено.");
+            emit resultReadySquare(results_sq_data);
+        } else if (m_solver) {
             // Настройка callback для отслеживания итераций
             auto iter_callback = [this](int iter, double precision, double residual, double error) {
+                if (QThread::currentThread()->isInterruptionRequested()){
+                    return false; // Stop solver's internal loop
+                }
                 emit iterationUpdate(iter, precision, residual, error);
-                return true; // Продолжить итерации
+                return !QThread::currentThread()->isInterruptionRequested(); // Continue if not interrupted
             };
-            solver->setIterationCallback(iter_callback);
+            m_solver->setIterationCallback(iter_callback);
+
+            // Настройка callback для стадий решения (должна быть реализована в DirichletSolver)
+            m_solver->setProgressCallback([this](const std::string& msg){
+                 if (QThread::currentThread()->isInterruptionRequested()){
+                    // Optionally handle interruption here
+                    return;
+                }
+                emit solverStageUpdate(QString::fromStdString(msg));
+            });
             
-            // Решаем уравнение
-            SolverResults results = solver->solve();
-            emit resultReady(results);
+            emit solverStageUpdate("Запуск решения для G-образной области...");
+            SolverResults results_data = m_solver->solve();
+            if (QThread::currentThread()->isInterruptionRequested()) {
+                emit solverStageUpdate("Решение для G-образной области прервано.");
+                emit finished();
+                return;
+            }
+            emit solverStageUpdate("Решение для G-образной области завершено.");
+            emit resultReady(results_data);
         }
     } catch (const std::exception& e) {
+        emit solverStageUpdate(QString("Ошибка в процессе решения: %1").arg(e.what()));
         std::cerr << "Ошибка в процессе решения: " << e.what() << std::endl;
     }
     
     emit finished();
 }
 
+// Implementation of PlottingWorker constructor
+PlottingWorker::PlottingWorker(const PlottingWorker::MainWindowSolverParams& worker_params_arg,
+                               const SquareSolverResults& results_square_arg,
+                               const SolverResults& results_arg,
+                               QObject *parent_arg)
+    : QObject(parent_arg),
+      params(worker_params_arg),
+      results_square(results_square_arg),
+      results(results_arg),
+      stop_requested(0)
+{
+}
+
+// Реализация PlottingWorker
+void PlottingWorker::process() {
+    emit progressUpdate("Начало подготовки данных для графиков...");
+
+    if (stop_requested.loadAcquire()) { emit finished(); return; } // Changed to loadAcquire
+
+    // 2D Plotting
+    emit progressUpdate("Подготовка данных для 2D графика...");
+    QVariantMap plot_2d_data;
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        plot_2d_data["solution"] = QVariant::fromValue(results_square.solution);
+        plot_2d_data["x_coords"] = QVariant::fromValue(results_square.x_coords);
+        plot_2d_data["y_coords"] = QVariant::fromValue(results_square.y_coords);
+        plot_2d_data["true_solution"] = QVariant::fromValue(results_square.true_solution);
+        plot_2d_data["error_data"] = QVariant::fromValue(results_square.error); // Added for chart type switching
+        plot_2d_data["residual_data"] = QVariant::fromValue(results_square.residual); // Added for chart type switching
+    } else {
+        plot_2d_data["solution"] = QVariant::fromValue(results.solution);
+        plot_2d_data["x_coords"] = QVariant::fromValue(results.x_coords);
+        plot_2d_data["y_coords"] = QVariant::fromValue(results.y_coords);
+        plot_2d_data["true_solution"] = QVariant::fromValue(results.true_solution);
+        plot_2d_data["error_data"] = QVariant::fromValue(results.error); // Added
+        plot_2d_data["residual_data"] = QVariant::fromValue(results.residual); // Added
+    }
+    plot_2d_data["a_bound"] = params.a_bound;
+    plot_2d_data["b_bound"] = params.b_bound;
+    plot_2d_data["c_bound"] = params.c_bound;
+    plot_2d_data["d_bound"] = params.d_bound;
+    plot_2d_data["solver_type"] = params.solver_type;
+
+
+    emit progressUpdate("Данные для 2D графика подготовлены. Обновление...");
+    if (stop_requested.loadAcquire()) { emit finished(); return; } // Changed to loadAcquire
+    emit plotDataReady2D(plot_2d_data);
+    // UI update for 2D plot will happen in MainWindow::handlePlotData2D
+    emit progressUpdate("2D график должен быть обновлен.");
+
+    if (stop_requested.loadAcquire()) { emit finished(); return; } // Changed to loadAcquire
+
+    // 3D Plotting
+    emit progressUpdate("Подготовка данных для 3D визуализации...");
+    QVariantMap plot_3d_data;
+    plot_3d_data["is_square_solver"] = params.solver_type.contains("ступень 2", Qt::CaseInsensitive);
+    plot_3d_data["use_refined_grid"] = params.use_refined_grid;
+    plot_3d_data["a_bound"] = params.a_bound;
+    plot_3d_data["b_bound"] = params.b_bound;
+    plot_3d_data["c_bound"] = params.c_bound;
+    plot_3d_data["d_bound"] = params.d_bound;
+
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        plot_3d_data["solution"] = QVariant::fromValue(results_square.solution);
+        plot_3d_data["true_solution"] = QVariant::fromValue(results_square.true_solution);
+        plot_3d_data["error"] = QVariant::fromValue(results_square.error);
+        plot_3d_data["x_coords"] = QVariant::fromValue(results_square.x_coords);
+        plot_3d_data["y_coords"] = QVariant::fromValue(results_square.y_coords);
+        if (params.use_refined_grid && !results_square.refined_grid_solution.empty()) {
+            plot_3d_data["refined_grid_solution"] = QVariant::fromValue(results_square.refined_grid_solution);
+            plot_3d_data["solution_refined_diff"] = QVariant::fromValue(results_square.solution_refined_diff);
+            plot_3d_data["refined_grid_x_coords"] = QVariant::fromValue(results_square.refined_grid_x_coords);
+            plot_3d_data["refined_grid_y_coords"] = QVariant::fromValue(results_square.refined_grid_y_coords);
+        }
+    } else { // G-Shape
+        plot_3d_data["solution"] = QVariant::fromValue(results.solution);
+        plot_3d_data["true_solution"] = QVariant::fromValue(results.true_solution);
+        plot_3d_data["error"] = QVariant::fromValue(results.error);
+        plot_3d_data["x_coords"] = QVariant::fromValue(results.x_coords);
+        plot_3d_data["y_coords"] = QVariant::fromValue(results.y_coords);
+    }
+    emit progressUpdate("Данные для 3D визуализации подготовлены. Обновление...");
+    if (stop_requested.loadAcquire()) { emit finished(); return; } // Changed to loadAcquire
+    emit plotDataReady3D(plot_3d_data);
+    // UI update for 3D plot will happen in MainWindow::handlePlotData3D
+    emit progressUpdate("3D визуализация должна быть обновлена.");
+
+    emit progressUpdate("Построение графиков завершено.");
+    emit finished();
+}
+
+
 // Реализация класса MainWindow
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , solverThread(nullptr) // Initialize pointers
+    , worker(nullptr)
+    , plottingWorker(nullptr)
+    , plottingThread(nullptr)
     , isSolving(false)
     , solveSuccessful(false)
 {
@@ -191,7 +328,9 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1024, 768);
     
     // Устанавливаем начальные параметры решателя
-    params.n_internal = 30;
+    // Эти параметры могут быть загружены из настроек или установлены по умолчанию
+    // Для примера, установим их здесь:
+    params.n_internal = 30; // Примерное значение
     params.m_internal = 30;
     params.a_bound = 1.0;
     params.b_bound = 2.0;
@@ -213,8 +352,10 @@ MainWindow::~MainWindow()
 {
     // Очищаем поток решателя
     cleanupThread();
+    // Очищаем поток построения графиков
+    cleanupPlottingThread();
     
-    // Финализируем Kokkos, если мы его инициализировали
+    // Финализируем Kokkos, если мы его инициалировали
     if (Kokkos::is_initialized()) {
         Kokkos::finalize();
     }
@@ -222,9 +363,39 @@ MainWindow::~MainWindow()
 
 void MainWindow::onSolveButtonClicked()
 {
-    if (isSolving) {
+    if (isSolving) { // If already solving, do nothing (or queue, but not requested)
+        QMessageBox::information(this, "Информация", "Решение уже выполняется.");
         return;
     }
+
+    // Stop and clean up previous plotting task if any
+    if (plottingThread && plottingThread->isRunning()) {
+        updateSolverProgress("Остановка предыдущего процесса построения графиков...");
+        plottingWorker->requestStop();
+        plottingThread->quit();
+        plottingThread->wait(5000); // Wait max 5 seconds
+        cleanupPlottingThread();
+        updateSolverProgress("Предыдущий процесс построения графиков остановлен.");
+    }
+    cleanupPlottingThread(); // Ensure it's clean
+
+    // Stop and clean up previous solver task if any (should not happen if isSolving is managed correctly)
+    if (solverThread && solverThread->isRunning()) {
+        updateSolverProgress("Остановка предыдущего процесса решения...");
+        if(worker) { // Request solver to stop through its own mechanism if possible
+            if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+                if (auto* s = worker->getSolverSquare()) s->requestStop();
+            } else {
+                if (auto* s = worker->getSolver()) s->requestStop();
+            }
+        }
+        solverThread->requestInterruption(); // Request interruption
+        solverThread->quit();
+        solverThread->wait(5000); // Wait max 5 seconds
+        cleanupThread();
+        updateSolverProgress("Предыдущий процесс решения остановлен.");
+    }
+    cleanupThread(); // Ensure it's clean
     
     // Получаем параметры решателя из UI
     params.n_internal = solverTab->getNInternal();
@@ -273,8 +444,12 @@ void MainWindow::onSolveButtonClicked()
     solverThread = new QThread;
     worker->moveToThread(solverThread);
     
+    // Connect solver stage updates
+    connect(worker, &SolverWorker::solverStageUpdate, this, &MainWindow::updateSolverProgress);
+
     connect(solverThread, &QThread::started, worker, &SolverWorker::process);
     connect(worker, &SolverWorker::finished, this, &MainWindow::onSolverFinished);
+    // Corrected signal names for resultReady, resultReadySquare, and iterationUpdate
     connect(worker, &SolverWorker::resultReady, this, &MainWindow::handleResults);
     connect(worker, &SolverWorker::resultReadySquare, this, &MainWindow::handleResultsSquare);
     connect(worker, &SolverWorker::iterationUpdate, this, &MainWindow::updateIterationInfo);
@@ -288,22 +463,41 @@ void MainWindow::onSolveButtonClicked()
 
 void MainWindow::onStopButtonClicked()
 {
-    if (!isSolving) {
+    if (!isSolving && !(plottingThread && plottingThread->isRunning())) {
         return;
     }
     
+    updateSolverProgress("Получен запрос на остановку...");
+
     // Останавливаем решатель
-    if (worker) {
+    if (isSolving && worker) {
+        updateSolverProgress("Остановка процесса решения...");
         if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
             if (auto* s = worker->getSolverSquare()) {
-                s->requestStop();
+                s->requestStop(); // Internal stop mechanism of the solver
             }
         } else {
             if (auto* s = worker->getSolver()) {
-                s->requestStop();
+                s->requestStop(); // Internal stop mechanism of the solver
             }
         }
+        if (solverThread) {
+            solverThread->requestInterruption(); // Interrupt the thread
+        }
+         // UI will be updated in onSolverFinished
+    } else {
+         updateSolverProgress("Процесс решения не активен или уже остановлен.");
     }
+
+    // Останавливаем построение графиков, если оно идет
+    if (plottingWorker && plottingThread && plottingThread->isRunning()) {
+        updateSolverProgress("Остановка процесса построения графиков...");
+        plottingWorker->requestStop();
+        // plottingThread will quit and clean up via its finished signal
+    } else {
+        updateSolverProgress("Процесс построения графиков не активен.");
+    }
+    // Buttons will be re-enabled in onSolverFinished and onPlottingFinished
 }
 
 void MainWindow::setupSolver()
@@ -412,42 +606,23 @@ void MainWindow::handleResults(const SolverResults& res)
 {
     // Сохраняем результаты
     this->results = res;
-    solveSuccessful = true;
+    solveSuccessful = true; // Mark solve as successful before starting plotting
     
-    // Обновляем визуализацию
-    visualizationTab->updateChart(
-        res.solution,
-        res.x_coords,
-        res.y_coords,
-        res.true_solution,
-        params.a_bound, params.b_bound,
-        params.c_bound, params.d_bound
-    );
-    visualizationTab->setSolveSuccessful(true);
+    updateSolverProgress("Результаты решения (G-образная область) получены.");
     
-    // Обновляем 3D визуализацию
-    visualization3DTab->createOrUpdate3DSurfaces(
-        res.solution,
-        res.true_solution,
-        res.error,
-        res.x_coords,
-        res.y_coords,
-        params.a_bound, params.b_bound,
-        params.c_bound, params.d_bound,
-        false, // is_square_solver
-        false  // use_refined_grid
-    );
-    visualization3DTab->setSolveSuccessful(true);
-    
-    // Обновляем данные в таблице (используем прямое заполнение вместо CSV)
-    tableTab->setResultsData(
-        res.solution,
-        res.true_solution,
-        res.error,
-        res.x_coords,
-        res.y_coords,
-        false // G-образная область не является квадратной сеткой
-    );
+    // Записываем в таблицу только если сетка не больше 50x50
+    if (params.n_internal <= 50 && params.m_internal <= 50) {
+        tableTab->setResultsData(
+            res.solution,
+            res.true_solution,
+            res.error,
+            res.x_coords,
+            res.y_coords,
+            false // G-образная область не является квадратной сеткой
+        );
+    } else {
+        updateSolverProgress("Автоматическое создание таблицы пропущено: сетка больше 50x50.");
+    }
     
     // Обновляем информацию о решении на вкладке прогресса
     progressTab->updateSolverFinished(
@@ -460,83 +635,41 @@ void MainWindow::handleResults(const SolverResults& res)
         res.stop_reason
     );
     
-    // Обновляем информацию о матрице - здесь нужно убрать обращение к полям matrix_size и nonzero_elements,
-    // которых нет в структуре SolverResults
-    QString matrixInfo = QString("Размер системы: %1x%1, Ненулевых элементов: %2")
-                        .arg(res.solution.size())  // вместо matrix_size используем размер решения
-                        .arg(0);  // nonzero_elements не доступно, выводим 0
+    QString matrixInfo = QString("Размер системы (G-обр.): %1 узлов")
+                        .arg(res.solution.size());
     solverTab->updateMatrixInfo(matrixInfo);
-    
-    updateHelpTabInfo(); // Update help tab after results
+
+    // Запускаем построение графиков в отдельнем потоке
+    startPlottingTasks();
 }
 
-void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
+void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq_data)
 {
     // Сохраняем результаты
-    this->results_square = results_sq;
-    solveSuccessful = true;
-    
-    // Обновляем визуализацию
-    visualizationTab->updateChart(
-        this->results_square.solution,
-        this->results_square.x_coords,
-        this->results_square.y_coords,
-        this->results_square.true_solution,
-        params.a_bound, params.b_bound,
-        params.c_bound, params.d_bound
-    );
-    visualizationTab->setSolveSuccessful(true);
-    
-    // Обновляем 3D визуализацию
-    if (params.use_refined_grid && !this->results_square.refined_grid_solution.empty()) {
-        // Визуализация с учетом решения на уточненной сетке
-        visualization3DTab->createOrUpdateRefinedGridSurfaces(
-            this->results_square.solution,
-            this->results_square.refined_grid_solution,
-            this->results_square.solution_refined_diff,
-            this->results_square.x_coords,
-            this->results_square.y_coords,
-            this->results_square.refined_grid_x_coords,
-            this->results_square.refined_grid_y_coords,
-            params.a_bound, params.b_bound,
-            params.c_bound, params.d_bound
-        );
-        
-        // Устанавливаем информацию об ошибке на уточненной сетке
-        progressTab->setRefinedGridError(this->results_square.refined_grid_error);
-    } else {
-        // Стандартная визуализация
-        visualization3DTab->createOrUpdate3DSurfaces(
+    this->results_square = results_sq_data;
+    solveSuccessful = true; // Mark solve as successful before starting plotting
+
+    updateSolverProgress("Результаты решения (квадратная область) получены.");
+
+    // Записываем в таблицу только если сетка не больше 50x50
+    if (params.n_internal <= 50 && params.m_internal <= 50) {
+        tableTab->setResultsData(
             this->results_square.solution,
             this->results_square.true_solution,
             this->results_square.error,
             this->results_square.x_coords,
             this->results_square.y_coords,
-            params.a_bound, params.b_bound,
-            params.c_bound, params.d_bound,
-            true, // is_square_solver
-            false // use_refined_grid
+            true // квадратная сетка
         );
-    }
-    visualization3DTab->setSolveSuccessful(true);
-    
-    // Обновляем данные в таблице (используем прямое заполнение вместо CSV)
-    tableTab->setResultsData(
-        this->results_square.solution,
-        this->results_square.true_solution,
-        this->results_square.error,
-        this->results_square.x_coords,
-        this->results_square.y_coords,
-        true // квадратная сетка
-    );
-    
-    // Если есть решение на уточненной сетке, передаем его
-    if (params.use_refined_grid && !this->results_square.refined_grid_solution.empty()) {
-        tableTab->setRefinedGridData(
-            this->results_square.refined_grid_solution,
-            this->results_square.refined_grid_x_coords, 
-            this->results_square.refined_grid_y_coords
-        );
+        if (params.use_refined_grid && !this->results_square.refined_grid_solution.empty()) {
+            tableTab->setRefinedGridData(
+                this->results_square.refined_grid_solution,
+                this->results_square.refined_grid_x_coords, 
+                this->results_square.refined_grid_y_coords
+            );
+        }
+    } else {
+        updateSolverProgress("Автоматическое создание таблицы пропущено: сетка больше 50x50.");
     }
     
     // Обновляем информацию о решении на вкладке прогресса
@@ -550,16 +683,13 @@ void MainWindow::handleResultsSquare(const SquareSolverResults& results_sq)
         this->results_square.stop_reason
     );
     
-    // Обновляем информацию о матрице - используем другие доступные поля
-    int matrixSize = params.n_internal * params.m_internal;  // примерная оценка размера матрицы
-    int nonZeroElements = matrixSize * 5;  // примерная оценка для 5-точечного шаблона
-    
-    QString matrixInfo = QString("Размер системы: %1x%1, Ненулевых элементов: ~%2")
-                        .arg(matrixSize)
-                        .arg(nonZeroElements);
+    int matrixSize = (params.n_internal -1) * (params.m_internal -1); 
+    QString matrixInfo = QString("Размер системы (квадрат): %1 узлов")
+                        .arg(matrixSize);
     solverTab->updateMatrixInfo(matrixInfo);
-    
-    updateHelpTabInfo(); // Update help tab after results
+
+    // Запускаем построение графиков в отдельном потоке
+    startPlottingTasks();
 }
 
 void MainWindow::updateHelpTabInfo() {
@@ -770,519 +900,377 @@ void MainWindow::updateIterationInfo(int iteration, double precision, double res
 {
     // Обновляем информацию о текущей итерации на вкладке прогресса
     progressTab->updateIterationInfo(iteration, precision, residual, error);
+    // Также добавляем в общий лог прогресса, если нужно (опционально)
+    // updateSolverProgress(QString("Итерация: %1, Точность: %L2, Невязка: %L3, Ошибка: %L4")
+    //                      .arg(iteration).arg(precision, 0, 'e', 2).arg(residual, 0, 'e', 2).arg(error, 0, 'e', 2));
 }
 
 void MainWindow::onSolverFinished()
 {
-    // Обновляем UI для состояния "Завершено"
-    isSolving = false;
-    solverTab->setSolveButtonEnabled(true);
-    solverTab->setStopButtonEnabled(false);
-    
-    // Явно активируем ComboBox в табличной вкладке
-    tableTab->setDataTypeComboEnabled(true);
-    
-    // Обновляем вкладку справки, если решение было успешным
-    if (solveSuccessful) {
-        updateHelpTabInfo(); // Ensure help tab is updated with final results
-        tabWidget->setCurrentWidget(visualizationTab); // Optionally switch to visualization
+    // Этот слот теперь в основном управляет состоянием после завершения потока решателя.
+    // Графики и отчеты обрабатываются после получения результатов.
+    isSolving = false; 
+    // Кнопки будут управляться более гранулярно, но можно оставить базовое управление здесь
+    // solverTab->setSolveButtonEnabled(true); // Будет управляться в onPlottingFinished или если нет solveSuccessful
+    // solverTab->setStopButtonEnabled(false);
+
+
+    if (!solveSuccessful) { // Если решение не успешно (прервано или ошибка)
+        updateSolverProgress("Процесс решения завершен (неуспешно или прерван).");
+        solverTab->setSolveButtonEnabled(true); // Разрешить новый запуск
+        solverTab->setStopButtonEnabled(false);
+        helpTab->clearHelpText();
     } else {
-        helpTab->clearHelpText(); // Clear help text if solve was not successful or stopped
+        // Если успешно, то startPlottingTasks уже был вызван из handleResults/handleResultsSquare
+        // Ничего специфичного здесь делать не нужно, кроме логгирования, если только
+        updateSolverProgress("Процесс решения завершен успешно. Ожидание построения графиков...");
     }
+    // Очистка потока решателя происходит в connect lambda в onSolveButtonClicked
 }
 
-void MainWindow::cleanupThread()
+
+void MainWindow::cleanupThread() // Renamed for clarity if it's specific to solver thread
 {
     if (solverThread) {
         if (solverThread->isRunning()) {
+            solverThread->requestInterruption(); // Ensure interruption is requested
             solverThread->quit();
-            solverThread->wait();
+            if (!solverThread->wait(3000)) { // Wait a bit
+                updateSolverProgress("Поток решателя не завершился штатно, возможно потребуется принудительное завершение.");
+                // solverThread->terminate(); // крайняя мера
+            }
         }
         delete solverThread;
         solverThread = nullptr;
     }
     
     if (worker) {
-        delete worker;
+        delete worker; // worker удаляется после того как поток завершен
         worker = nullptr;
     }
 }
 
-void MainWindow::onSaveResultsButtonClicked()
-{
+// Новые слоты и функции для управления потоком построения графиков
+
+void MainWindow::updateSolverProgress(const QString& status) {
+    // progressTab has no addProgressStep method, so we use qDebug
+    qDebug() << status;
+}
+
+void MainWindow::startPlottingTasks() {
     if (!solveSuccessful) {
-        QMessageBox::warning(this, "Ошибка", "Нет результатов для сохранения");
+        updateSolverProgress("Построение графиков отменено: решение не было успешным.");
+        solverTab->setSolveButtonEnabled(true); // Разрешить новый запуск
+        solverTab->setStopButtonEnabled(false);
         return;
     }
-    
-    QString fileName = QFileDialog::getSaveFileName(this, "Сохранение результатов", "", "Текстовые файлы (*.txt)");
-    if (fileName.isEmpty()) {
-        return;
+
+    if (plottingThread && plottingThread->isRunning()) {
+        updateSolverProgress("Остановка предыдущего процесса построения графиков перед запуском нового...");
+        plottingWorker->requestStop();
+        plottingThread->quit();
+        plottingThread->wait(5000);
+        cleanupPlottingThread();
     }
-    
-    std::ofstream file(fileName.toStdString());
-    if (!file.is_open()) {
-        QMessageBox::critical(this, "Ошибка", "Не удалось открыть файл для записи");
-        return;
-    }
-    
-    file << "Результаты решения уравнения Пуассона\n";
-    file << "=========================================\n";
-    
-    file << "Параметры сетки:\n";
-    file << "Внутренние узлы: " << params.n_internal << " x " << params.m_internal << "\n";
-    file << "Границы области: [" << params.a_bound << ", " << params.b_bound << "] x [" << params.c_bound << ", " << params.d_bound << "]\n\n";
-    
-    file << "Критерии останова:\n";
-    if (params.use_precision) {
-        file << "- Точность: " << params.eps_precision << "\n";
-    }
-    if (params.use_residual) {
-        file << "- Невязка: " << params.eps_residual << "\n";
-    }
-    if (params.use_exact_error) {
-        file << "- Ошибка: " << params.eps_exact_error << "\n";
-    }
-    if (params.use_max_iterations) {
-        file << "- Макс. итераций: " << params.max_iterations << "\n";
-    }
-    file << "\n";
-    
-    file << "Результаты:\n";
-    
-    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
-        file << "Тип решателя: Квадратная область\n";
-        file << "Итерации: " << results_square.iterations << "\n";
-        file << "Точность: " << results_square.precision << "\n";
-        file << "Норма невязки: " << results_square.residual_norm << "\n";
-        file << "Норма ошибки: " << results_square.error_norm << "\n";
-        file << "Сходимость: " << (results_square.converged ? "Да" : "Нет") << "\n";
-        file << "Причина остановки: " << results_square.stop_reason << "\n";
-        
-        if (params.use_refined_grid) {
-            file << "Ошибка относительно решения на мелкой сетке: " << results_square.refined_grid_error << "\n";
+    cleanupPlottingThread(); // Double check
+
+    updateSolverProgress("Запуск процесса построения графиков...");
+
+    // Prepare worker params
+    PlottingWorker::MainWindowSolverParams workerParams = params;
+    plottingWorker = new PlottingWorker(workerParams, results_square, results);
+    plottingThread = new QThread();
+    plottingWorker->moveToThread(plottingThread);
+
+    connect(plottingThread, &QThread::started, plottingWorker, &PlottingWorker::process);
+    connect(plottingWorker, &PlottingWorker::progressUpdate, this, &MainWindow::updateSolverProgress);
+    connect(plottingWorker, &PlottingWorker::plotDataReady2D, this, &MainWindow::handlePlotData2D);
+    connect(plottingWorker, &PlottingWorker::plotDataReady3D, this, &MainWindow::handlePlotData3D);
+    connect(plottingWorker, &PlottingWorker::finished, this, &MainWindow::onPlottingFinished);
+    connect(plottingThread, &QThread::finished, this, &MainWindow::cleanupPlottingThread); // Связываем finished потока с его очисткой
+
+    plottingThread->start();
+    solverTab->setSolveButtonEnabled(false); // Блокируем кнопку "Решить" пока идет построение
+    solverTab->setStopButtonEnabled(true); // Разрешаем остановку
+}
+
+void MainWindow::handlePlotData2D(const QVariantMap& data) {
+    updateSolverProgress("Обновление 2D визуализации...");
+    // Извлекаем данные из QVariantMap и обновляем visualizationTab
+    // Это должно быть безопасным, так как выполняется в основном потоке
+    QString solverType = data.value("solver_type").toString();
+    std::vector<double> sol = data.value("solution").value<std::vector<double>>();
+    std::vector<double> x_c = data.value("x_coords").value<std::vector<double>>();
+    std::vector<double> y_c = data.value("y_coords").value<std::vector<double>>();
+    std::vector<double> true_sol = data.value("true_solution").value<std::vector<double>>();
+    // Данные для переключения типов графиков
+    // std::vector<double> error_data = data.value("error_data").value<std::vector<double>>();
+    // std::vector<double> residual_data = data.value("residual_data").value<std::vector<double>>();
+
+    double a = data.value("a_bound").toDouble();
+    double b = data.value("b_bound").toDouble();
+    double c = data.value("c_bound").toDouble();
+    double d = data.value("d_bound").toDouble();
+
+    visualizationTab->updateChart(sol, x_c, y_c, true_sol, a, b, c, d);
+    visualizationTab->setSolveSuccessful(true); // Убедимся, что вкладка знает об успехе
+    updateSolverProgress("2D визуализация обновлена.");
+}
+
+void MainWindow::handlePlotData3D(const QVariantMap& data) {
+    updateSolverProgress("Обновление 3D визуализации...");
+    // Извлекаем данные и обновляем visualization3DTab
+    bool is_sq_solver = data.value("is_square_solver").toBool();
+    bool use_ref_grid = data.value("use_refined_grid").toBool();
+    std::vector<double> sol = data.value("solution").value<std::vector<double>>();
+    std::vector<double> true_sol = data.value("true_solution").value<std::vector<double>>();
+    std::vector<double> err = data.value("error").value<std::vector<double>>();
+    std::vector<double> x_c = data.value("x_coords").value<std::vector<double>>();
+    std::vector<double> y_c = data.value("y_coords").value<std::vector<double>>();
+    double a = data.value("a_bound").toDouble();
+    double b = data.value("b_bound").toDouble();
+    double c = data.value("c_bound").toDouble();
+    double d = data.value("d_bound").toDouble();
+
+    if (is_sq_solver && use_ref_grid && data.contains("refined_grid_solution")) {
+        std::vector<double> ref_sol = data.value("refined_grid_solution").value<std::vector<double>>();
+        std::vector<double> sol_ref_diff = data.value("solution_refined_diff").value<std::vector<double>>();
+        std::vector<double> ref_x_c = data.value("refined_grid_x_coords").value<std::vector<double>>();
+        std::vector<double> ref_y_c = data.value("refined_grid_y_coords").value<std::vector<double>>();
+        if (!ref_sol.empty()){
+            visualization3DTab->createOrUpdateRefinedGridSurfaces(
+                sol, ref_sol, sol_ref_diff, x_c, y_c, ref_x_c, ref_y_c, a, b, c, d
+            );
+        } else { // Fallback if refined solution is empty for some reason
+             visualization3DTab->createOrUpdate3DSurfaces(sol, true_sol, err, x_c, y_c, a, b, c, d, is_sq_solver, false);
         }
     } else {
-        file << "Тип решателя: G-образная область\n";
-        file << "Итерации: " << results.iterations << "\n";
-        file << "Точность: " << results.precision << "\n";
-        file << "Норма невязки: " << results.residual_norm << "\n";
-        file << "Норма ошибки: " << results.error_norm << "\n";
-        file << "Сходимость: " << (results.converged ? "Да" : "Нет") << "\n";
-        file << "Причина остановки: " << results.stop_reason << "\n";
+        visualization3DTab->createOrUpdate3DSurfaces(sol, true_sol, err, x_c, y_c, a, b, c, d, is_sq_solver, false);
     }
-    
-    file.close();
-    QMessageBox::information(this, "Успех", "Результаты сохранены в файл");
+    visualization3DTab->setSolveSuccessful(true);
+    updateSolverProgress("3D визуализация обновлена.");
 }
 
-void MainWindow::onSaveMatrixButtonClicked()
-{
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Ошибка", "Нет матрицы для сохранения");
-        return;
-    }
-    
-    QString fileName = QFileDialog::getSaveFileName(this, "Сохранение матрицы и вектора правой части", "", "Текстовые файлы (*.txt)");
-    if (fileName.isEmpty()) {
-        return;
-    }
-    
-    bool result = false;
-    
-    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
-        // Для квадратного решателя
-        if (worker && worker->getSolverSquare()) {
-            // Создаем новый солвер с теми же настройками, что и оригинальный
-            auto solver_sq = std::make_unique<DirichletSolverSquare>(
-                params.n_internal, params.m_internal,
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-            
-            // Сохраняем матрицу и вектор правой части в файл
-            result = solver_sq->saveMatrixAndRhsToFile(fileName.toStdString());
-        }
+void MainWindow::onPlottingFinished() {
+    updateSolverProgress("Все процессы построения графиков завершены.");
+    // Очистка потока построения графиков будет выполнена через cleanupPlottingThread,
+    // который подключен к QThread::finished.
+
+    // Теперь, когда графики построены, генерируем отчет
+    if (solveSuccessful) {
+        updateSolverProgress("Составление отчета...");
+        updateHelpTabInfo(); // Generate report
+        updateSolverProgress("Отчет сформирован и доступен на вкладке 'Справка'.");
+        tabWidget->setCurrentWidget(visualizationTab); // Optionally switch to visualization
     } else {
-        // Для G-образного решателя
-        if (worker && worker->getSolver()) {
-            // Создаем новый солвер с теми же настройками, что и оригинальный
-            auto solver = std::make_unique<DirichletSolver>(
-                params.n_internal, params.m_internal,
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-            
-            // Сохраняем матрицу и вектор правой части в файл
-            result = solver->saveMatrixAndRhsToFile(fileName.toStdString());
-        }
+        helpTab->clearHelpText();
     }
     
-    if (result) {
-        QMessageBox::information(this, "Успех", "Матрица и вектор правой части сохранены в файл");
-    } else {
-        QMessageBox::critical(this, "Ошибка", "Не удалось сохранить матрицу и вектор правой части в файл");
-    }
+    // Разблокируем кнопку "Решить" и блокируем "Стоп" только если все завершено
+    solverTab->setSolveButtonEnabled(true);
+    solverTab->setStopButtonEnabled(false);
+    tableTab->setDataTypeComboEnabled(true); // Активируем ComboBox в таблице
 }
 
-void MainWindow::onSaveVisualizationButtonClicked()
-{
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Ошибка", "Нет визуализации для сохранения");
-        return;
-    }
-    
-    // Сохранение текущего вида графика в зависимости от активной вкладки
-    int currentTabIndex = tabWidget->currentIndex();
-    
-    if (currentTabIndex == 2) { // 2D Визуализация
-        QString fileName = QFileDialog::getSaveFileName(this, "Сохранение графика", "", "Изображения (*.png *.jpg)");
-        if (fileName.isEmpty()) {
-            return;
+void MainWindow::cleanupPlottingThread() {
+    if (plottingThread) {
+        if (plottingThread->isRunning()) {
+            // Поток должен был уже завершиться сам, но на всякий случай
+            plottingWorker->requestStop(); // Попросим воркер остановиться
+            plottingThread->quit();
+            if (!plottingThread->wait(3000)) {
+                 updateSolverProgress("Поток построения графиков не завершился штатно.");
+                // plottingThread->terminate(); // крайняя мера
+            }
         }
-        
-        QPixmap pixmap = visualizationTab->grab();
-        pixmap.save(fileName);
-        
-        QMessageBox::information(this, "Успех", "График сохранен в файл");
-    } else if (currentTabIndex == 3) { // 3D Визуализация
-        QMessageBox::information(this, "Информация", "Функция сохранения 3D визуализации в файл не реализована в данной версии.");
-    } else {
-        QMessageBox::warning(this, "Ошибка", "Текущая вкладка не содержит визуализации для сохранения");
+        delete plottingThread;
+        plottingThread = nullptr;
     }
+    if (plottingWorker) {
+        delete plottingWorker;
+        plottingWorker = nullptr;
+    }
+     updateSolverProgress("Ресурсы потока построения графиков очищены.");
 }
 
-void MainWindow::onShowReportButtonClicked()
-{
-    QMessageBox::information(this, "Информация", "Функция показа отчета не реализована в данной версии.");
+// Слоты для сохранения и навигации
+void MainWindow::onSaveResultsButtonClicked() {
+    // Сохраняем результаты в CSV
+    onExportCSVRequested(tableTab->getSkipFactor());
 }
 
-void MainWindow::onTabChanged(int index)
-{
-    // Выполняем действия при переключении вкладок
-    if (index == 3) { // 3D Визуализация
-        // Если решение успешно и мы переключились на вкладку 3D визуализации
-        if (solveSuccessful) {
-            // Обновляем 3D визуализацию, если необходимо (можно убрать, если это делается автоматически)
-        }
-    }
+void MainWindow::onSaveMatrixButtonClicked() {
+    // Сохранение матрицы пока не реализовано
+    QMessageBox::information(this, "Информация", "Сохранение матрицы не реализовано.");
 }
 
-void MainWindow::onChartTypeChanged(int index)
-{
-    // Реагируем на изменение типа графика в 2D визуализации
-    if (!solveSuccessful) {
-        return;
-    }
-    
-    // Обновляем график с нужным типом данных
-    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
-        // Для квадратного решателя
-        if (index == 0) { // Решение
-            visualizationTab->updateChart(
-                results_square.solution,
-                results_square.x_coords,
-                results_square.y_coords,
-                results_square.true_solution,
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-        } else if (index == 1) { // Ошибка
-            visualizationTab->updateChart(
-                results_square.error,
-                results_square.x_coords,
-                results_square.y_coords,
-                std::vector<double>(),
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-        } else if (index == 2) { // Невязка
-            visualizationTab->updateChart(
-                results_square.residual,
-                results_square.x_coords,
-                results_square.y_coords,
-                std::vector<double>(),
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-        }
-    } else {
-        // Для G-образного решателя
-        if (index == 0) { // Решение
-            visualizationTab->updateChart(
-                results.solution,
-                results.x_coords,
-                results.y_coords,
-                results.true_solution,  // изменено с true_solution_on_mesh
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-        } else if (index == 1) { // Ошибка
-            visualizationTab->updateChart(
-                results.error,
-                results.x_coords,
-                results.y_coords,
-                std::vector<double>(),
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
-        } else if (index == 2) { // Невязка
-            visualizationTab->updateChart(
-                results.residual,
-                results.x_coords,
-                results.y_coords,
-                std::vector<double>(),
-                params.a_bound, params.b_bound,
-                params.c_bound, params.d_bound
-            );
+void MainWindow::onSaveVisualizationButtonClicked() {
+    // Сохранение визуализации пока не реализовано
+    QMessageBox::information(this, "Информация", "Сохранение визуализации не реализовано.");
+}
+
+void MainWindow::onShowReportButtonClicked() {
+    // Переключаемся на вкладку "Справка"
+    tabWidget->setCurrentWidget(helpTab);
+}
+
+void MainWindow::onTabChanged(int index) {
+    // При смене вкладки можно выполнить дополнительные действия
+    Q_UNUSED(index);
+}
+
+void MainWindow::onShowHeatMapClicked() {
+    // Показ/скрытие тепловой карты
+    visualization3DTab->toggleHeatMap();
+}
+
+void MainWindow::onExportCSVRequested(int skipFactor) {
+    QString csv = generateCSVData(skipFactor);
+    QString fileName = QFileDialog::getSaveFileName(this, "Сохранить CSV", QString(), "CSV файлы (*.csv)");
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(csv.toUtf8());
+            file.close();
+            updateSolverProgress(QString("CSV сохранен: %1").arg(fileName));
+        } else {
+            QMessageBox::warning(this, "Ошибка", "Не удалось сохранить CSV.");
         }
     }
 }
 
-void MainWindow::onShowHeatMapClicked()
-{
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Ошибка", "Нет данных для отображения тепловой карты");
-        return;
-    }
-    
-    QMessageBox::information(this, "Информация", "Функция отображения тепловой карты не реализована в данной версии.");
-}
-
-void MainWindow::onExportCSVRequested(int skipFactor)
-{
-    if (!solveSuccessful) {
-        QMessageBox::warning(this, "Ошибка", "Нет данных для экспорта");
-        return;
-    }
-    
-    QString fileName = QFileDialog::getSaveFileName(this, "Экспорт данных", "", "CSV файлы (*.csv)");
-    if (fileName.isEmpty()) {
-        return;
-    }
-    
-    QString csvData = generateCSVData(skipFactor);
-    
-    std::ofstream file(fileName.toStdString());
-    if (!file.is_open()) {
-        QMessageBox::critical(this, "Ошибка", "Не удалось открыть файл для записи");
-        return;
-    }
-    
-    file << csvData.toStdString();
-    file.close();
-    
-    QMessageBox::information(this, "Успех", "Данные экспортированы в файл CSV");
-}
-
-QString MainWindow::generateCSVData(int skipFactor)
-{
-    if (params.solver_type.contains("основная", Qt::CaseInsensitive)) {
-        return generateCSVForMainProblem(skipFactor);
-    } else if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
+// Generate CSV based on solver type
+QString MainWindow::generateCSVData(int skipFactor) {
+    if (params.solver_type.contains("тестовая", Qt::CaseInsensitive)) {
         return generateCSVForTestProblem(skipFactor);
+    } else if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        return generateCSVForMainProblem(skipFactor);
     } else {
         return generateCSVForGShapeProblem(skipFactor);
     }
 }
 
-QString MainWindow::generateCSVForTestProblem(int skipFactor)
-{
-    if (!solveSuccessful || results_square.solution.empty()) {
-        return "";
+// CSV for test problem (square domain with exact solution)
+QString MainWindow::generateCSVForTestProblem(int skipFactor) {
+    QString csv;
+    QTextStream out(&csv);
+    out << "x,y,solution,true_solution,error\n";
+    int n = results_square.x_coords.size();
+    skipFactor = qMax(1, skipFactor);
+    for (int i = 0; i < n; i += skipFactor) {
+        out << results_square.x_coords[i] << ","
+            << results_square.y_coords[i] << ","
+            << results_square.solution[i] << ","
+            << results_square.true_solution[i] << ","
+            << results_square.error[i] << "\n";
     }
-    
-    std::stringstream ss;
-    ss << "X,Y,Numerical Solution";
-    
-    bool hasTrueSolution = !results_square.true_solution.empty();
-    bool hasError = !results_square.error.empty();
-    
-    if (hasTrueSolution) {
-        ss << ",True Solution";
-    }
-    if (hasError) {
-        ss << ",Error";
-    }
-    ss << "\n";
-    
-    const auto& solution = results_square.solution;
-    const auto& x_coords = results_square.x_coords;
-    const auto& y_coords = results_square.y_coords;
-    const auto& true_sol = results_square.true_solution;
-    const auto& error = results_square.error;
-    
-    for (size_t i = 0; i < solution.size(); i += skipFactor) {
-        if (i < x_coords.size() && i < y_coords.size() && i < solution.size()) {
-            ss << x_coords[i] << "," << y_coords[i] << "," 
-               << solution[i];
-            
-            if (hasTrueSolution && i < true_sol.size()) {
-                ss << "," << true_sol[i];
-            } else if (hasTrueSolution) {
-                ss << ",";
-            }
-            
-            if (hasError && i < error.size()) {
-                ss << "," << error[i];
-            } else if (hasError) {
-                ss << ",";
-            }
-            
-            ss << "\n";
-        }
-    }
-    
-    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
-    ss << "\n# SECTIONS\n";
-    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
-    if (hasTrueSolution) {
-        ss << "# TRUE_SOLUTION: Точное решение\n";
-    }
-    if (hasError) {
-        ss << "# ERROR: Ошибка\n";
-    }
-    
-    return QString::fromStdString(ss.str());
+    return csv;
 }
 
-QString MainWindow::generateCSVForMainProblem(int skipFactor)
-{
-    if (!solveSuccessful || results_square.solution.empty()) {
-        return "";
+// CSV for main square problem (no exact solution)
+QString MainWindow::generateCSVForMainProblem(int skipFactor) {
+    QString csv;
+    QTextStream out(&csv);
+    out << "x,y,solution,error\n";
+    int n = results_square.x_coords.size();
+    skipFactor = qMax(1, skipFactor);
+    for (int i = 0; i < n; i += skipFactor) {
+        out << results_square.x_coords[i] << ","
+            << results_square.y_coords[i] << ","
+            << results_square.solution[i] << ","
+            << results_square.error[i] << "\n";
     }
-    
-    std::stringstream ss;
-    ss << "X,Y,Numerical Solution";
-    
-    bool hasTrueSolution = !results_square.true_solution.empty();
-    bool hasError = !results_square.error.empty();
-    bool hasRefinedGrid = !results_square.refined_grid_solution.empty();
-    
-    if (hasTrueSolution) {
-        ss << ",True Solution";
-    }
-    if (hasError) {
-        ss << ",Error";
-    }
-    ss << "\n";
-    
-    const auto& solution = results_square.solution;
-    const auto& x_coords = results_square.x_coords;
-    const auto& y_coords = results_square.y_coords;
-    const auto& true_sol = results_square.true_solution;
-    const auto& error = results_square.error;
-    
-    for (size_t i = 0; i < solution.size(); i += skipFactor) {
-        if (i < x_coords.size() && i < y_coords.size() && i < solution.size()) {
-            ss << x_coords[i] << "," << y_coords[i] << "," 
-               << solution[i];
-            
-            if (hasTrueSolution && i < true_sol.size()) {
-                ss << "," << true_sol[i];
-            } else if (hasTrueSolution) {
-                ss << ",";
-            }
-            
-            if (hasError && i < error.size()) {
-                ss << "," << error[i];
-            } else if (hasError) {
-                ss << ",";
-            }
-            
-            ss << "\n";
-        }
-    }
-    
-    // Если есть решение на уточненной сетке, добавляем его как отдельную секцию
-    if (hasRefinedGrid) {
-        ss << "\n# REFINED_GRID_SOLUTION\n";
-        ss << "X,Y,Refined Grid Solution\n";
-        
-        const auto& refined_solution = results_square.refined_grid_solution;
-        const auto& refined_x_coords = results_square.refined_grid_x_coords;
-        const auto& refined_y_coords = results_square.refined_grid_y_coords;
-        
-        for (size_t i = 0; i < refined_solution.size(); i += skipFactor) {
-            if (i < refined_x_coords.size() && i < refined_y_coords.size() && i < refined_solution.size()) {
-                ss << refined_x_coords[i] << "," << refined_y_coords[i] << "," 
-                   << refined_solution[i] << "\n";
-            }
-        }
-    }
-    
-    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
-    ss << "\n# SECTIONS\n";
-    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
-    if (hasTrueSolution) {
-        ss << "# TRUE_SOLUTION: Точное решение\n";
-    }
-    if (hasError) {
-        ss << "# ERROR: Ошибка\n";
-    }
-    if (hasRefinedGrid) {
-        ss << "# REFINED_GRID: Решение на уточненной сетке\n";
-    }
-    
-    return QString::fromStdString(ss.str());
+    return csv;
 }
 
-QString MainWindow::generateCSVForGShapeProblem(int skipFactor)
+// CSV for G-shaped domain problem
+QString MainWindow::generateCSVForGShapeProblem(int skipFactor) {
+    QString csv;
+    QTextStream out(&csv);
+    out << "x,y,solution,true_solution,error\n";
+    int n = results.x_coords.size();
+    skipFactor = qMax(1, skipFactor);
+    for (int i = 0; i < n; i += skipFactor) {
+        out << results.x_coords[i] << ","
+            << results.y_coords[i] << ","
+            << results.solution[i] << ","
+            << results.true_solution[i] << ","
+            << results.error[i] << "\n";
+    }
+    return csv;
+}
+
+// ...existing code...
+void MainWindow::onChartTypeChanged(int index)
 {
-    if (!solveSuccessful || results.solution.empty()) {
-        return "";
+    // Реагируем на изменение типа графика в 2D визуализации
+    if (!solveSuccessful) { // Если нет успешного решения, ничего не делаем
+        // visualizationTab->clear(); // Можно очистить, если нужно
+        return;
     }
     
-    std::stringstream ss;
-    ss << "X,Y,Numerical Solution";
-    
-    bool hasTrueSolution = !results.true_solution.empty();
-    bool hasError = !results.error.empty();
-    
-    if (hasTrueSolution) {
-        ss << ",True Solution";
-    }
-    if (hasError) {
-        ss << ",Error";
-    }
-    ss << "\n";
-    
-    const auto& solution = results.solution;
-    const auto& x_coords = results.x_coords;
-    const auto& y_coords = results.y_coords;
-    const auto& true_sol = results.true_solution;
-    const auto& error = results.error;
-    
-    for (size_t i = 0; i < solution.size(); i += skipFactor) {
-        if (i < x_coords.size() && i < y_coords.size() && i < solution.size()) {
-            ss << x_coords[i] << "," << y_coords[i] << "," 
-               << solution[i];
-            
-            if (hasTrueSolution && i < true_sol.size()) {
-                ss << "," << true_sol[i];
-            } else if (hasTrueSolution) {
-                ss << ",";
-            }
-            
-            if (hasError && i < error.size()) {
-                ss << "," << error[i];
-            } else if (hasError) {
-                ss << ",";
-            }
-            
-            ss << "\n";
+    updateSolverProgress(QString("Запрос на изменение типа 2D графика на индекс: %1").arg(index));
+
+    // Обновляем график с нужным типом данных
+    // Теперь данные для всех типов графиков должны быть в results_square или results
+    // и переданы в visualizationTab один раз. Переключение должно происходить внутри visualizationTab.
+    // Однако, если visualizationTab ожидает разные наборы данных для updateChart,
+    // то нужно будет вызывать его с соответствующими данными.
+    // Текущая реализация PlottingWorker::process передает все необходимые векторы.
+    // Мы можем либо передать их все в handlePlotData2D и далее в updateChart,
+    // либо здесь заново извлечь из this->results_square / this->results.
+    // Для консистентности с новым подходом, лучше, чтобы visualizationTab сам управлял выбором данных,
+    // если ему переданы все варианты. Если же его API требует явной передачи нужного вектора:
+
+    std::vector<double> data_to_plot;
+    std::vector<double> x_coords_to_plot;
+    std::vector<double> y_coords_to_plot;
+    std::vector<double> true_solution_for_plot; // Обычно только для основного решения
+
+    if (params.solver_type.contains("ступень 2", Qt::CaseInsensitive)) {
+        x_coords_to_plot = results_square.x_coords;
+        y_coords_to_plot = results_square.y_coords;
+        if (index == 0) { // Решение
+            data_to_plot = results_square.solution;
+            true_solution_for_plot = results_square.true_solution;
+        } else if (index == 1 && !results_square.error.empty()) { // Ошибка
+            data_to_plot = results_square.error;
+        } else if (index == 2 && !results_square.residual.empty()) { // Невязка
+            data_to_plot = results_square.residual;
+        } else {
+            updateSolverProgress("Данные для выбранного типа 2D графика (квадрат) отсутствуют.");
+            visualizationTab->clear(); // Очищаем, если данных нет
+            return;
+        }
+    } else { // G-образная область
+        x_coords_to_plot = results.x_coords;
+        y_coords_to_plot = results.y_coords;
+        if (index == 0) { // Решение
+            data_to_plot = results.solution;
+            true_solution_for_plot = results.true_solution;
+        } else if (index == 1 && !results.error.empty()) { // Ошибка
+            data_to_plot = results.error;
+        } else if (index == 2 && !results.residual.empty()) { // Невязка
+            data_to_plot = results.residual;
+        } else {
+            updateSolverProgress("Данные для выбранного типа 2D графика (G-обр.) отсутствуют.");
+            visualizationTab->clear();
+            return;
         }
     }
-    
-    // Добавляем секцию с информацией о типах данных для лучшей обработки в таблице
-    ss << "\n# SECTIONS\n";
-    ss << "# NUMERICAL_SOLUTION: Численное решение\n";
-    if (hasTrueSolution) {
-        ss << "# TRUE_SOLUTION: Точное решение\n";
+
+    if (!data_to_plot.empty()) {
+        visualizationTab->updateChart(
+            data_to_plot,
+            x_coords_to_plot,
+            y_coords_to_plot,
+            true_solution_for_plot,
+            params.a_bound, params.b_bound,
+            params.c_bound, params.d_bound
+        );
+        updateSolverProgress(QString("2D график обновлен для типа: %1.").arg(index));
+    } else {
+        updateSolverProgress(QString("Нет данных для отображения 2D графика типа: %1.").arg(index));
+        visualizationTab->clear();
     }
-    if (hasError) {
-        ss << "# ERROR: Ошибка\n";
-    }
-    
-    return QString::fromStdString(ss.str());
 }
