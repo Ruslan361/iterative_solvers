@@ -742,6 +742,23 @@ double DirichletSolverSquare::computeRefinedGridError() {
     refined_solver->setUseMaxIterationsStopping(current_use_max_i);
     refined_solver->setUseRefinedGridComparison(false); // Отключаем рекурсивное сравнение
 
+    // Вычисляем начальную норму невязки для уточненной сетки
+    // Получаем матрицу системы и вектор правой части
+    const auto& refined_grid = refined_solver->getGridSystem();
+    if (refined_grid) {
+        KokkosVector b_refined = refined_grid->get_rhs();
+        // Норма начальной невязки - это норма вектора правой части (при нулевом начальном приближении x0 = 0)
+        // ||Ax0 - b|| = ||0 - b|| = ||b||
+        double norm_b_refined = KokkosBlas::nrm2(b_refined);
+        
+        if (!refined_grid_results) {
+            refined_grid_results = std::make_unique<SquareSolverResults>();
+        }
+        
+        // Сохраняем начальную норму невязки для уточненной сетки
+        refined_grid_results->refined_grid_initial_residual_norm = norm_b_refined;
+    }
+
     // Решаем задачу на мелкой сетке
     SquareSolverResults refined_results_data = refined_solver->solve();
 
@@ -749,7 +766,15 @@ double DirichletSolverSquare::computeRefinedGridError() {
     if (!refined_grid_results) {
         refined_grid_results = std::make_unique<SquareSolverResults>();
     }
+    
+    // Сохраняем начальную норму невязки, которую мы вычислили выше
+    double initial_residual = refined_grid_results->refined_grid_initial_residual_norm;
+    
     *refined_grid_results = refined_results_data; // Копируем данные
+    
+    // Восстанавливаем начальную норму невязки, так как она могла быть перезаписана при копировании
+    refined_grid_results->refined_grid_initial_residual_norm = initial_residual;
+    
     refined_grid_results->refined_grid_solution = refined_results_data.solution;
     refined_grid_results->refined_grid_x_coords.clear();
     refined_grid_results->refined_grid_y_coords.clear();
