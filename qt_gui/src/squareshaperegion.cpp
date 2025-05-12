@@ -25,7 +25,9 @@ bool SquareShapeRegion::createSurfaces(
     const std::vector<double>& yCoords,
     double domainXMin, double domainXMax,
     double domainYMin, double domainYMax,
-    int decimationFactor)
+    int decimationFactor,
+    int connectorRows,
+    const std::vector<double>& initialApproximation)
 {
     // Очистка предыдущих поверхностей
     clearAllSurfaces();
@@ -50,6 +52,13 @@ bool SquareShapeRegion::createSurfaces(
 
     // Сохраняем данные для последующего использования
     m_lastNumericalSolutionData = numericalSolution;
+    
+    // Создаем вектор нулевых значений для начального приближения или используем предоставленное
+    if (initialApproximation.empty()) {
+        m_lastInitialApproximationData = std::vector<double>(numericalSolution.size(), 0.0);
+    } else {
+        m_lastInitialApproximationData = initialApproximation;
+    }
 
     // Обновляем диапазоны осей
     updateAxesRanges(numericalSolution);
@@ -63,6 +72,21 @@ bool SquareShapeRegion::createSurfaces(
         "Численное решение",
         decimationFactor
     );
+    
+    // Создание поверхности начального приближения
+    m_initialApproximationSeries = createSquareSurface(
+        m_lastInitialApproximationData,
+        xCoords,
+        yCoords,
+        QColor(150, 150, 150, 200), // Серый цвет с прозрачностью
+        "Начальное приближение",
+        decimationFactor
+    );
+    
+    // Делаем серию начального приближения изначально невидимой
+    if (m_initialApproximationSeries) {
+        m_initialApproximationSeries->setVisible(false);
+    }
 
     // Создание поверхности точного решения (если данные предоставлены)
     if (!trueSolution.empty() && trueSolution.size() == numericalSolution.size()) {
@@ -140,6 +164,13 @@ void SquareShapeRegion::setSolutionRefinedDiffVisible(bool visible) {
     }
 }
 
+void SquareShapeRegion::setInitialApproximationVisible(bool visible) {
+    if (m_initialApproximationSeries) {
+        m_initialApproximationSeries->setVisible(visible);
+        updateDynamicAxesRanges();
+    }
+}
+
 bool SquareShapeRegion::createSurfacesWithRefinedGrid(
     const std::vector<double>& numericalSolution,
     const std::vector<double>& refinedGridSolution,
@@ -174,6 +205,9 @@ bool SquareShapeRegion::createSurfacesWithRefinedGrid(
 
     // Сохраняем данные для последующего использования
     m_lastNumericalSolutionData = numericalSolution;
+    
+    // Создаем вектор нулевых значений для начального приближения
+    m_lastInitialApproximationData = std::vector<double>(numericalSolution.size(), 0.0);
 
     // Обновляем диапазоны осей
     updateAxesRanges(numericalSolution);
@@ -187,6 +221,21 @@ bool SquareShapeRegion::createSurfacesWithRefinedGrid(
         "Численное решение v(N)",
         decimationFactor
     );
+
+    // Создание поверхности начального приближения
+    m_initialApproximationSeries = createSquareSurface(
+        m_lastInitialApproximationData,
+        xCoords,
+        yCoords,
+        QColor(150, 150, 150, 200), // Серый цвет с прозрачностью
+        "Начальное приближение",
+        decimationFactor
+    );
+    
+    // Делаем серию начального приближения изначально невидимой
+    if (m_initialApproximationSeries) {
+        m_initialApproximationSeries->setVisible(false);
+    }
 
     // Создание поверхности решения на более мелкой сетке (если данные предоставлены)
     if (!refinedGridSolution.empty() && !refinedGridXCoords.empty() && !refinedGridYCoords.empty()) {
@@ -245,6 +294,7 @@ void SquareShapeRegion::clearAllSurfaces() {
     m_errorSeries = nullptr;
     m_refinedGridSolutionSeries = nullptr;
     m_solutionRefinedDiffSeries = nullptr;
+    m_initialApproximationSeries = nullptr;
 
     // Очищаем сохраненные данные
     m_lastNumericalSolutionData.clear();
@@ -252,6 +302,7 @@ void SquareShapeRegion::clearAllSurfaces() {
     m_lastErrorData.clear();
     m_lastRefinedGridSolutionData.clear();
     m_lastSolutionRefinedDiffData.clear();
+    m_lastInitialApproximationData.clear();
 }
 
 void SquareShapeRegion::updateAxesRanges(const std::vector<double>& values) {
@@ -314,6 +365,14 @@ void SquareShapeRegion::updateDynamicAxesRanges() {
 
     if (m_solutionRefinedDiffSeries && m_solutionRefinedDiffSeries->isVisible() && !m_lastSolutionRefinedDiffData.empty()) {
         auto [minIt, maxIt] = std::minmax_element(m_lastSolutionRefinedDiffData.begin(), m_lastSolutionRefinedDiffData.end());
+        minVal = std::min(minVal, *minIt);
+        maxVal = std::max(maxVal, *maxIt);
+        dataAvailable = true;
+    }
+
+    // Добавляем проверку для начального приближения
+    if (m_initialApproximationSeries && m_initialApproximationSeries->isVisible() && !m_lastInitialApproximationData.empty()) {
+        auto [minIt, maxIt] = std::minmax_element(m_lastInitialApproximationData.begin(), m_lastInitialApproximationData.end());
         minVal = std::min(minVal, *minIt);
         maxVal = std::max(maxVal, *maxIt);
         dataAvailable = true;

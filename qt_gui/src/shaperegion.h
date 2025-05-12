@@ -37,6 +37,8 @@ public:
      * @param domainYMin Минимальное значение Y для области
      * @param domainYMax Максимальное значение Y для области
      * @param decimationFactor Коэффициент прореживания (1 = использовать все точки)
+     * @param connectorRows Количество строк для соединительной части (используется в G-образной области)
+     * @param initialApproximation Начальное приближение (может быть пустым)
      * @return true в случае успеха, false в случае ошибки
      */
     virtual bool createSurfaces(
@@ -47,7 +49,9 @@ public:
         const std::vector<double>& yCoords,
         double domainXMin, double domainXMax,
         double domainYMin, double domainYMax,
-        int decimationFactor = 1
+        int decimationFactor = 1,
+        int connectorRows = 4,
+        const std::vector<double>& initialApproximation = std::vector<double>()
     ) = 0;
 
     /**
@@ -67,6 +71,12 @@ public:
      * @param visible Значение видимости
      */
     virtual void setErrorSurfaceVisible(bool visible) = 0;
+    
+    /**
+     * @brief Установить видимость поверхности начального приближения (нулевой плоскости)
+     * @param visible Значение видимости
+     */
+    virtual void setInitialApproximationVisible(bool visible) = 0;
     
     /**
      * @brief Очистить все поверхности

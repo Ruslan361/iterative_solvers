@@ -39,6 +39,8 @@ public:
      * @param domainYMin Минимальное значение Y для области
      * @param domainYMax Максимальное значение Y для области
      * @param decimationFactor Коэффициент прореживания (1 = использовать все точки)
+     * @param connectorRows Количество строк для соединительной части (не используется в квадратной области)
+     * @param initialApproximation Начальное приближение (может быть пустым)
      * @return true в случае успеха, false в случае ошибки
      */
     virtual bool createSurfaces(
@@ -49,7 +51,9 @@ public:
         const std::vector<double>& yCoords,
         double domainXMin, double domainXMax,
         double domainYMin, double domainYMax,
-        int decimationFactor = 1
+        int decimationFactor = 1,
+        int connectorRows = 4,
+        const std::vector<double>& initialApproximation = std::vector<double>()
     ) override;
 
     /**
@@ -69,6 +73,12 @@ public:
      * @param visible Значение видимости
      */
     virtual void setErrorSurfaceVisible(bool visible) override;
+    
+    /**
+     * @brief Установить видимость поверхности начального приближения (нулевой плоскости)
+     * @param visible Значение видимости
+     */
+    virtual void setInitialApproximationVisible(bool visible) override;
     
     /**
      * @brief Установить видимость поверхности решения на более мелкой сетке
@@ -134,6 +144,7 @@ private:
     QSurface3DSeries* m_solutionSeries = nullptr;
     QSurface3DSeries* m_trueSolutionSeries = nullptr;
     QSurface3DSeries* m_errorSeries = nullptr;
+    QSurface3DSeries* m_initialApproximationSeries = nullptr; // Серия для начального приближения
     
     // Серии для решения на более мелкой сетке (для "Основная задача (ступень 2)")
     QSurface3DSeries* m_refinedGridSolutionSeries = nullptr;
@@ -143,6 +154,7 @@ private:
     std::vector<double> m_lastNumericalSolutionData;
     std::vector<double> m_lastTrueSolutionData;
     std::vector<double> m_lastErrorData;
+    std::vector<double> m_lastInitialApproximationData; // Данные начального приближения (нулевая плоскость)
     
     // Последние данные для решения на мелкой сетке
     std::vector<double> m_lastRefinedGridSolutionData;

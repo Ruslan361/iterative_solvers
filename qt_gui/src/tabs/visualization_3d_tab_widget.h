@@ -53,6 +53,7 @@ public slots:
     void onSolutionSeriesVisibilityChanged(bool visible);
     void onTrueSolutionSeriesVisibilityChanged(bool visible);
     void onErrorSeriesVisibilityChanged(bool visible);
+    void onInitialApproximationVisibilityChanged(bool visible); // Новый слот для нулевой плоскости
     
 private slots:
     void onDecimationFactorButtonClicked();
@@ -68,6 +69,7 @@ private:
     QCheckBox *showSolutionCheckBox;
     QCheckBox *showTrueSolutionCheckBox;
     QCheckBox *showErrorCheckBox;
+    QCheckBox *showInitialApproximationCheckBox; // Новый чекбокс для нулевой плоскости
     QPushButton *showHeatMapButton;
     QSpinBox *decimationFactorSpinBox;
     QPushButton *decimationFactorButton;

@@ -63,6 +63,7 @@ void Visualization3DTabWidget::setupUI()
     showSolutionCheckBox = new QCheckBox("Показать численное решение");
     showTrueSolutionCheckBox = new QCheckBox("Показать точное решение");
     showErrorCheckBox = new QCheckBox("Показать ошибку");
+    showInitialApproximationCheckBox = new QCheckBox("Показать начальное приближение (нулевая плоскость)");
     showHeatMapButton = new QPushButton("Показать тепловую карту ошибки");
     
     // Добавляем элементы управления прореживанием
@@ -83,11 +84,13 @@ void Visualization3DTabWidget::setupUI()
     showSolutionCheckBox->setChecked(true);
     showTrueSolutionCheckBox->setChecked(false);
     showErrorCheckBox->setChecked(false);
+    showInitialApproximationCheckBox->setChecked(false);
     
     // Добавляем элементы управления в layout
     controlsLayout->addWidget(showSolutionCheckBox);
     controlsLayout->addWidget(showTrueSolutionCheckBox);
     controlsLayout->addWidget(showErrorCheckBox);
+    controlsLayout->addWidget(showInitialApproximationCheckBox);
     controlsLayout->addLayout(decimationLayout);
     controlsLayout->addWidget(showHeatMapButton);
     
@@ -98,6 +101,8 @@ void Visualization3DTabWidget::setupUI()
             this, &Visualization3DTabWidget::onTrueSolutionSeriesVisibilityChanged);
     connect(showErrorCheckBox, &QCheckBox::toggled, 
             this, &Visualization3DTabWidget::onErrorSeriesVisibilityChanged);
+    connect(showInitialApproximationCheckBox, &QCheckBox::toggled,
+            this, &Visualization3DTabWidget::onInitialApproximationVisibilityChanged);
     connect(showHeatMapButton, &QPushButton::clicked, 
             this, &Visualization3DTabWidget::onShowHeatMapButtonClicked);
     connect(decimationFactorButton, &QPushButton::clicked, 
@@ -180,6 +185,7 @@ void Visualization3DTabWidget::createOrUpdate3DSurfaces(
         shapeRegion->setNumericalSolutionVisible(showSolutionCheckBox->isChecked());
         shapeRegion->setTrueSolutionVisible(showTrueSolutionCheckBox->isChecked());
         shapeRegion->setErrorSurfaceVisible(showErrorCheckBox->isChecked());
+        shapeRegion->setInitialApproximationVisible(showInitialApproximationCheckBox->isChecked());
         
         // Активируем кнопки
         showHeatMapButton->setEnabled(true);
@@ -361,6 +367,24 @@ void Visualization3DTabWidget::onErrorSeriesVisibilityChanged(bool visible)
     }
 }
 
+void Visualization3DTabWidget::onInitialApproximationVisibilityChanged(bool visible)
+{
+    if (shapeRegion) {
+        // Проверка типа области и вызов соответствующего метода
+        if (isSquareSolver) {
+            auto* squareRegion = dynamic_cast<SquareShapeRegion*>(shapeRegion.get());
+            if (squareRegion) {
+                squareRegion->setInitialApproximationVisible(visible);
+            }
+        } else {
+            auto* gshapeRegion = dynamic_cast<GShapeRegion*>(shapeRegion.get());
+            if (gshapeRegion) {
+                gshapeRegion->setInitialApproximationVisible(visible);
+            }
+        }
+    }
+}
+
 void Visualization3DTabWidget::onDecimationFactorButtonClicked()
 {
     if (!shapeRegion || !solveSuccessful) {
@@ -388,6 +412,7 @@ void Visualization3DTabWidget::onDecimationFactorButtonClicked()
         shapeRegion->setNumericalSolutionVisible(showSolutionCheckBox->isChecked());
         shapeRegion->setTrueSolutionVisible(showTrueSolutionCheckBox->isChecked());
         shapeRegion->setErrorSurfaceVisible(showErrorCheckBox->isChecked());
+        shapeRegion->setInitialApproximationVisible(showInitialApproximationCheckBox->isChecked());
     }
 }
 

@@ -40,6 +40,17 @@ void GShapeRegion::setErrorSurfaceVisible(bool visible) {
     updateDynamicAxesRanges();
 }
 
+// Set visibility for initial approximation surface
+void GShapeRegion::setInitialApproximationVisible(bool visible) {
+    if (m_initialApproximationSeries.bigRect != nullptr || 
+        m_initialApproximationSeries.smallRect != nullptr || 
+        m_initialApproximationSeries.connector != nullptr) {
+        m_initialApproximationSeries.setVisible(visible);
+        // Also update dynamic ranges to account for the potentially newly visible surface
+        updateDynamicAxesRanges();
+    }
+}
+
 // Update axes ranges based on provided values
 void GShapeRegion::updateAxesRanges(const std::vector<double>& values) {
     if (values.empty() || !m_graph3D) return;
@@ -483,89 +494,95 @@ bool GShapeRegion::createSurfaces(
     double domainXMin, double domainXMax,
     double domainYMin, double domainYMax,
     int decimationFactor,
-    int connectorRows
+    int connectorRows,
+    const std::vector<double>& initialApproximation
 ) {
-    if (!m_graph3D) {
-        qWarning() << "Graph3D is not initialized in GShapeRegion.";
+    // Validate input data
+    if (numericalSolution.empty() || xCoords.empty() || yCoords.empty() ||
+        numericalSolution.size() != xCoords.size() || numericalSolution.size() != yCoords.size()) {
+        qWarning() << "GShapeRegion::createSurfaces: Input data is invalid or mismatched.";
         return false;
     }
-    if (numericalSolution.empty() || xCoords.empty() || yCoords.empty()) {
-        qWarning() << "No data provided for G-shaped surface construction.";
-        return false;
-    }
-
-    clearAllSurfaces(); 
-
+    
+    // Store domain boundaries for later use (e.g., in updateDynamicAxesRanges)
     m_currentDomainXMin = domainXMin;
     m_currentDomainXMax = domainXMax;
     m_currentDomainYMin = domainYMin;
     m_currentDomainYMax = domainYMax;
-    m_currentValueMin = std::numeric_limits<double>::max(); // Reset for new data
-    m_currentValueMax = std::numeric_limits<double>::lowest();
-
-    // Store data for dynamic updates
-    m_lastNumericalSolutionData.clear();
-    m_lastTrueSolutionData.clear();
-    m_lastErrorData.clear();
-
-    if (!numericalSolution.empty()) m_lastNumericalSolutionData = numericalSolution;
-    if (!trueSolution.empty()) m_lastTrueSolutionData = trueSolution;
-    if (!errorValues.empty()) m_lastErrorData = errorValues;
-
-    double xSplit = (domainXMin + domainXMax) / 2.0;
-    double ySplit = (domainYMin + domainYMax) / 2.0;
-
-    // Create Numerical Solution Surface
-    if (!numericalSolution.empty()) {
-        GShapeDataArrays solData = createDataArrays(numericalSolution, xCoords, yCoords, xSplit, ySplit, decimationFactor, connectorRows);
-        m_solutionSeries = createSeries(solData, QColor(Qt::blue), "Numerical Solution");
-        // updateAxesRanges(numericalSolution); // Initial call, will be refined later
+    
+    // Clear existing solutions before creating new ones
+    clearAllSurfaces();
+    
+    // Determine the split points for the G-shape based on domain boundaries
+    double xSplit = (domainXMin + domainXMax) / 2.0; // Vertical split at middle of X range
+    double ySplit = (domainYMin + domainYMax) / 2.0; // Horizontal split at middle of Y range
+    
+    m_lastNumericalSolutionData = numericalSolution; // Store for dynamic axis updates
+    
+    // Create numerical solution surface (always required)
+    GShapeDataArrays solutionArrays = createDataArrays(
+        numericalSolution, xCoords, yCoords, 
+        xSplit, ySplit, decimationFactor, connectorRows
+    );
+    
+    m_solutionSeries = createSeries(solutionArrays, QColor(0, 0, 255, 200), "Numerical Solution");
+    
+    // Create true solution surface if data is provided
+    if (!trueSolution.empty() && trueSolution.size() == numericalSolution.size()) {
+        m_lastTrueSolutionData = trueSolution; // Store for dynamic axis updates
+        
+        GShapeDataArrays trueSolutionArrays = createDataArrays(
+            trueSolution, xCoords, yCoords,
+            xSplit, ySplit, decimationFactor, connectorRows
+        );
+        
+        m_trueSolutionSeries = createSeries(trueSolutionArrays, QColor(0, 255, 0, 200), "True Solution");
     }
-
-    // Create True Solution Surface (if data provided)
+    
+    // Create error surface if data is provided
+    if (!errorValues.empty() && errorValues.size() == numericalSolution.size()) {
+        m_lastErrorData = errorValues; // Store for dynamic axis updates
+        
+        GShapeDataArrays errorArrays = createDataArrays(
+            errorValues, xCoords, yCoords,
+            xSplit, ySplit, decimationFactor, connectorRows
+        );
+        
+        m_errorSeries = createSeries(errorArrays, QColor(255, 0, 0, 200), "Error");
+    }
+    
+    // Create initial approximation surface if data is provided
+    if (!initialApproximation.empty() && initialApproximation.size() == numericalSolution.size()) {
+        m_lastInitialApproximationData = initialApproximation; // Store for dynamic axis updates
+        
+        GShapeDataArrays initialApproxArrays = createDataArrays(
+            initialApproximation, xCoords, yCoords,
+            xSplit, ySplit, decimationFactor, connectorRows
+        );
+        
+        m_initialApproximationSeries = createSeries(initialApproxArrays, QColor(128, 128, 128, 200), "Initial Approximation");
+    }
+    
+    // Update axes based on displayed surfaces
+    std::vector<double> allValues;
+    allValues.reserve(numericalSolution.size() + trueSolution.size() + errorValues.size() + initialApproximation.size());
+    
+    allValues.insert(allValues.end(), numericalSolution.begin(), numericalSolution.end());
+    
     if (!trueSolution.empty()) {
-        GShapeDataArrays trueSolData = createDataArrays(trueSolution, xCoords, yCoords, xSplit, ySplit, decimationFactor, connectorRows);
-        m_trueSolutionSeries = createSeries(trueSolData, QColor(Qt::green), "True Solution");
-        m_trueSolutionSeries.setVisible(false); 
-        // updateAxesRanges(trueSolution); 
+        allValues.insert(allValues.end(), trueSolution.begin(), trueSolution.end());
     }
-
-    // Create Error Surface (if data provided)
+    
     if (!errorValues.empty()) {
-        GShapeDataArrays errorData = createDataArrays(errorValues, xCoords, yCoords, xSplit, ySplit, decimationFactor, connectorRows);
-        m_errorSeries = createSeries(errorData, QColor(Qt::red), "Error");
-        m_errorSeries.setVisible(false); 
-        // updateAxesRanges(errorValues);
+        allValues.insert(allValues.end(), errorValues.begin(), errorValues.end());
     }
     
-    std::vector<double> all_values_for_range_check;
-    if(!numericalSolution.empty()) all_values_for_range_check.insert(all_values_for_range_check.end(), numericalSolution.begin(), numericalSolution.end());
-    if(!trueSolution.empty()) all_values_for_range_check.insert(all_values_for_range_check.end(), trueSolution.begin(), trueSolution.end());
-    if(!errorValues.empty()) all_values_for_range_check.insert(all_values_for_range_check.end(), errorValues.begin(), errorValues.end());
-    
-    if (!all_values_for_range_check.empty()) {
-        updateAxesRanges(all_values_for_range_check);
-    } else if (!numericalSolution.empty()) { // Fallback if only numerical solution exists and others were empty
-         updateAxesRanges(numericalSolution);
+    if (!initialApproximation.empty()) {
+        allValues.insert(allValues.end(), initialApproximation.begin(), initialApproximation.end());
     }
-
-    m_graph3D->setTitle("G-Shaped Domain Solution");
-    updateDynamicAxesRanges(); // Call this to set axes based on default visibility
+    
+    updateAxesRanges(allValues);
+    updateDynamicAxesRanges(); // Initial dynamic adjustment based on visibility
+    
     return true;
-}
-
-bool GShapeRegion::createSurfaces(
-    const std::vector<double>& numericalSolution,
-    const std::vector<double>& trueSolution,
-    const std::vector<double>& errorValues,
-    const std::vector<double>& xCoords,
-    const std::vector<double>& yCoords,
-    double domainXMin, double domainXMax,
-    double domainYMin, double domainYMax,
-    int decimationFactor
-) {
-    // Use a default value for connectorRows
-    return createSurfaces(numericalSolution, trueSolution, errorValues, 
-                         xCoords, yCoords, domainXMin, domainXMax, domainYMin, domainYMax,
-                         decimationFactor, 5); // 5 is the default connector rows
 }

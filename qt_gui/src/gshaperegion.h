@@ -97,33 +97,7 @@ public:
      * @param domainYMax Максимальное значение Y для области
      * @param decimationFactor Коэффициент прореживания (1 = использовать все точки)
      * @param connectorRows Количество строк для соединительной части
-     * @return true в случае успеха, false в случае ошибки
-     */
-    bool createSurfaces(
-        const std::vector<double>& numericalSolution,
-        const std::vector<double>& trueSolution,
-        const std::vector<double>& errorValues,
-        const std::vector<double>& xCoords,
-        const std::vector<double>& yCoords,
-        double domainXMin, double domainXMax,
-        double domainYMin, double domainYMax,
-        int decimationFactor,
-        int connectorRows
-    );
-
-    /**
-     * @brief Создать Г-образную поверхность для заданных данных
-     * 
-     * @param numericalSolution Численное решение
-     * @param trueSolution Точное решение (может быть пустым)
-     * @param errorValues Ошибки (может быть пустым)
-     * @param xCoords X-координаты точек
-     * @param yCoords Y-координаты точек
-     * @param domainXMin Минимальное значение X для области
-     * @param domainXMax Максимальное значение X для области
-     * @param domainYMin Минимальное значение Y для области
-     * @param domainYMax Максимальное значение Y для области
-     * @param decimationFactor Коэффициент прореживания (1 = использовать все точки)
+     * @param initialApproximation Начальное приближение (нулевая плоскость) - может быть пустым вектором
      * @return true в случае успеха, false в случае ошибки
      */
     virtual bool createSurfaces(
@@ -134,7 +108,9 @@ public:
         const std::vector<double>& yCoords,
         double domainXMin, double domainXMax,
         double domainYMin, double domainYMax,
-        int decimationFactor = 1
+        int decimationFactor = 1,
+        int connectorRows = 4,
+        const std::vector<double>& initialApproximation = std::vector<double>()
     ) override;
 
     /**
@@ -156,6 +132,12 @@ public:
     virtual void setErrorSurfaceVisible(bool visible) override;
     
     /**
+     * @brief Установить видимость поверхности начального приближения
+     * @param visible Значение видимости
+     */
+    virtual void setInitialApproximationVisible(bool visible) override;
+    
+    /**
      * @brief Очистить все поверхности
      */
     virtual void clearAllSurfaces() override;
@@ -164,11 +146,13 @@ private:
     GShapeSeries m_solutionSeries;      ///< Серия для численного решения
     GShapeSeries m_trueSolutionSeries;  ///< Серия для точного решения
     GShapeSeries m_errorSeries;         ///< Серия для ошибки
+    GShapeSeries m_initialApproximationSeries; ///< Серия для начального приближения (нулевая плоскость)
     
     // Store last data for dynamic axes updates
     std::vector<double> m_lastNumericalSolutionData;
     std::vector<double> m_lastTrueSolutionData;
     std::vector<double> m_lastErrorData;
+    std::vector<double> m_lastInitialApproximationData; ///< Данные начального приближения
 
     /**
      * @brief Создать массивы данных для одной Г-образной поверхности

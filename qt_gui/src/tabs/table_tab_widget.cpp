@@ -359,103 +359,89 @@ void TableTabWidget::populateTableWithSolutionData(bool isNumericSolution)
     
     int skipFactor = skipFactorSpinBox->value();
     
-    if (m_is_square_grid) {
-        // Для квадратной сетки организуем данные в виде таблицы X на Y
+    // Для всех типов сеток (квадратных и Г-образных) используем табличное представление
+    
+    // Получаем уникальные координаты X и Y
+    std::set<double> uniqueX, uniqueY;
+    for (size_t i = 0; i < m_x_coords.size(); i++) {
+        uniqueX.insert(m_x_coords[i]);
+        uniqueY.insert(m_y_coords[i]);
+    }
+    
+    // Преобразуем в векторы для удобства индексации с прореживанием
+    std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
+    std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+    
+    // Создаем прореженные координаты, но с оригинальными индексами
+    std::vector<double> xCoordsSkipped;
+    std::vector<int> xIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
+        xCoordsSkipped.push_back(xCoords[i]);
+        xIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    std::vector<double> yCoordsSkipped;
+    std::vector<int> yIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
+        yCoordsSkipped.push_back(yCoords[i]);
+        yIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    // Устанавливаем размеры таблицы
+    dataTable->setRowCount(yCoordsSkipped.size());
+    dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
+    
+    // Устанавливаем заголовки столбцов с индексами для X
+    QStringList headers;
+    headers << "Индекс" << "Y/X";
+    for (size_t i = 0; i < xCoordsSkipped.size(); i++) {
+        // Используем оригинальный индекс вместо i
+        headers << QString("%1\n(%2)").arg(xCoordsSkipped[i], 0, 'g', 6).arg(xIndicesSkipped[i]); 
+    }
+    dataTable->setHorizontalHeaderLabels(headers);
+    
+    // Заполняем данные
+    for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
+        double y = yCoordsSkipped[rowIdx];
         
-        // Получаем уникальные координаты X и Y
-        std::set<double> uniqueX, uniqueY;
-        for (size_t i = 0; i < m_x_coords.size(); i++) {
-            uniqueX.insert(m_x_coords[i]);
-            uniqueY.insert(m_y_coords[i]);
-        }
+        // Добавляем оригинальный индекс строки вместо rowIdx
+        dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(yIndicesSkipped[rowIdx])));
         
-        // Преобразуем в векторы для удобства индексации с прореживанием
-        std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
-        std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+        // Устанавливаем метку Y в первый столбец
+        dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
         
-        // Создаем прореженные координаты
-        std::vector<double> xCoordsSkipped, yCoordsSkipped;
-        for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
-            xCoordsSkipped.push_back(xCoords[i]);
-        }
-        for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
-            yCoordsSkipped.push_back(yCoords[i]);
-        }
-        
-        // Устанавливаем размеры таблицы
-        dataTable->setRowCount(yCoordsSkipped.size());
-        dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
-        
-        // Устанавливаем заголовки столбцов
-        QStringList headers;
-        headers << "Индекс" << "Y/X";
-        for (const auto& x : xCoordsSkipped) {
-            headers << QString::number(x, 'g', 6);
-        }
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        // Заполняем данные
-        for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
-            double y = yCoordsSkipped[rowIdx];
+        // Заполняем значения в строке
+        for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
+            double x = xCoordsSkipped[colIdx];
             
-            // Добавляем индекс строки
-            dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(rowIdx)));
+            // Ищем индекс точки с координатами (x, y)
+            bool found = false;
+            double value = 0.0;
+            int nodeIndex = -1;
             
-            // Устанавливаем метку Y в первый столбец
-            dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
-            
-            // Заполняем значения в строке
-            for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
-                double x = xCoordsSkipped[colIdx];
-                
-                // Ищем индекс точки с координатами (x, y)
-                bool found = false;
-                double value = 0.0;
-                int nodeIndex = -1;
-                
-                for (size_t i = 0; i < m_x_coords.size(); i++) {
-                    if (std::abs(m_x_coords[i] - x) < 1e-9 && std::abs(m_y_coords[i] - y) < 1e-9) {
-                        if (i < dataToShow.size()) {
-                            value = dataToShow[i];
-                            found = true;
-                            nodeIndex = i; // Сохраняем индекс узла в исходной сетке
-                            break;
-                        }
+            for (size_t i = 0; i < m_x_coords.size(); i++) {
+                if (std::abs(m_x_coords[i] - x) < 1e-9 && std::abs(m_y_coords[i] - y) < 1e-9) {
+                    if (i < dataToShow.size()) {
+                        value = dataToShow[i];
+                        found = true;
+                        nodeIndex = i; // Сохраняем индекс узла в исходной сетке
+                        break;
                     }
                 }
-                
-                if (found) {
-                    // Создаем текст с значением и индексом узла
-                    QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
-                    QTableWidgetItem* item = new QTableWidgetItem(cellText);
-                    
-                    // Сохраняем также индекс узла в данных элемента для возможного доступа
-                    item->setData(Qt::UserRole, nodeIndex);
-                    
-                    dataTable->setItem(rowIdx, colIdx + 2, item);
-                } else {
-                    dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("NaN"));
-                }
             }
-        }
-    } else {
-        // Для произвольной сетки просто выводим список точек
-        int numRows = dataToShow.size() / skipFactor + (dataToShow.size() % skipFactor > 0 ? 1 : 0);
-        dataTable->setRowCount(numRows);
-        dataTable->setColumnCount(4); // Индекс, X, Y, Value
-        
-        QStringList headers;
-        headers << "Индекс" << "X" << "Y" << (isNumericSolution ? "Численное решение" : "Точное решение");
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        int rowIdx = 0;
-        for (size_t i = 0; i < dataToShow.size(); i += skipFactor) {
-            if (i < m_x_coords.size() && i < m_y_coords.size()) {
-                dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(i))); // Индекс узла
-                dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(m_x_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 2, new QTableWidgetItem(QString::number(m_y_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 3, new QTableWidgetItem(QString::number(dataToShow[i], 'g', 9)));
-                rowIdx++;
+            
+            if (found) {
+                // Создаем текст с значением и индексом узла
+                QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
+                QTableWidgetItem* item = new QTableWidgetItem(cellText);
+                
+                // Сохраняем также индекс узла в данных элемента для возможного доступа
+                item->setData(Qt::UserRole, nodeIndex);
+                
+                dataTable->setItem(rowIdx, colIdx + 2, item);
+            } else {
+                // Для узлов вне области используем "---" вместо "NaN"
+                dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("---"));
             }
         }
     }
@@ -480,103 +466,89 @@ void TableTabWidget::populateTableWithErrorData()
     
     int skipFactor = skipFactorSpinBox->value();
     
-    if (m_is_square_grid) {
-        // Для квадратной сетки - аналогично populateTableWithSolutionData
+    // Для всех типов сеток (квадратных и Г-образных) используем табличное представление
+    
+    // Получаем уникальные координаты X и Y
+    std::set<double> uniqueX, uniqueY;
+    for (size_t i = 0; i < m_x_coords.size(); i++) {
+        uniqueX.insert(m_x_coords[i]);
+        uniqueY.insert(m_y_coords[i]);
+    }
+    
+    // Преобразуем в векторы для удобства индексации с прореживанием
+    std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
+    std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+    
+    // Создаем прореженные координаты, но с оригинальными индексами
+    std::vector<double> xCoordsSkipped;
+    std::vector<int> xIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
+        xCoordsSkipped.push_back(xCoords[i]);
+        xIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    std::vector<double> yCoordsSkipped;
+    std::vector<int> yIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
+        yCoordsSkipped.push_back(yCoords[i]);
+        yIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    // Устанавливаем размеры таблицы
+    dataTable->setRowCount(yCoordsSkipped.size());
+    dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
+    
+    // Устанавливаем заголовки столбцов с индексами для X
+    QStringList headers;
+    headers << "Индекс" << "Y/X";
+    for (size_t i = 0; i < xCoordsSkipped.size(); i++) {
+        // Используем оригинальный индекс вместо i
+        headers << QString("%1\n(%2)").arg(xCoordsSkipped[i], 0, 'g', 6).arg(xIndicesSkipped[i]); 
+    }
+    dataTable->setHorizontalHeaderLabels(headers);
+    
+    // Заполняем данные
+    for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
+        double y = yCoordsSkipped[rowIdx];
         
-        // Получаем уникальные координаты X и Y
-        std::set<double> uniqueX, uniqueY;
-        for (size_t i = 0; i < m_x_coords.size(); i++) {
-            uniqueX.insert(m_x_coords[i]);
-            uniqueY.insert(m_y_coords[i]);
-        }
+        // Добавляем оригинальный индекс строки вместо rowIdx
+        dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(yIndicesSkipped[rowIdx])));
         
-        // Преобразуем в векторы для удобства индексации с прореживанием
-        std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
-        std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+        // Устанавливаем метку Y в первый столбец
+        dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
         
-        // Создаем прореженные координаты
-        std::vector<double> xCoordsSkipped, yCoordsSkipped;
-        for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
-            xCoordsSkipped.push_back(xCoords[i]);
-        }
-        for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
-            yCoordsSkipped.push_back(yCoords[i]);
-        }
-        
-        // Устанавливаем размеры таблицы
-        dataTable->setRowCount(yCoordsSkipped.size());
-        dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
-        
-        // Устанавливаем заголовки столбцов
-        QStringList headers;
-        headers << "Индекс" << "Y/X";
-        for (const auto& x : xCoordsSkipped) {
-            headers << QString::number(x, 'g', 6);
-        }
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        // Заполняем данные
-        for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
-            double y = yCoordsSkipped[rowIdx];
+        // Заполняем значения в строке
+        for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
+            double x = xCoordsSkipped[colIdx];
             
-            // Добавляем индекс строки
-            dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(rowIdx)));
+            // Ищем индекс точки с координатами (x, y)
+            bool found = false;
+            double value = 0.0;
+            int nodeIndex = -1;
             
-            // Устанавливаем метку Y в первый столбец
-            dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
-            
-            // Заполняем значения в строке
-            for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
-                double x = xCoordsSkipped[colIdx];
-                
-                // Ищем индекс точки с координатами (x, y)
-                bool found = false;
-                double value = 0.0;
-                int nodeIndex = -1;
-                
-                for (size_t i = 0; i < m_x_coords.size(); i++) {
-                    if (std::abs(m_x_coords[i] - x) < 1e-9 && std::abs(m_y_coords[i] - y) < 1e-9) {
-                        if (i < m_error.size()) {
-                            value = m_error[i];
-                            found = true;
-                            nodeIndex = i; // Сохраняем индекс узла в исходной сетке
-                            break;
-                        }
+            for (size_t i = 0; i < m_x_coords.size(); i++) {
+                if (std::abs(m_x_coords[i] - x) < 1e-9 && std::abs(m_y_coords[i] - y) < 1e-9) {
+                    if (i < m_error.size()) {
+                        value = m_error[i];
+                        found = true;
+                        nodeIndex = i; // Сохраняем индекс узла в исходной сетке
+                        break;
                     }
                 }
-                
-                if (found) {
-                    // Создаем текст с значением и индексом узла
-                    QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
-                    QTableWidgetItem* item = new QTableWidgetItem(cellText);
-                    
-                    // Сохраняем также индекс узла в данных элемента для возможного доступа
-                    item->setData(Qt::UserRole, nodeIndex);
-                    
-                    dataTable->setItem(rowIdx, colIdx + 2, item);
-                } else {
-                    dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("NaN"));
-                }
             }
-        }
-    } else {
-        // Для произвольной сетки просто выводим список точек
-        int numRows = m_error.size() / skipFactor + (m_error.size() % skipFactor > 0 ? 1 : 0);
-        dataTable->setRowCount(numRows);
-        dataTable->setColumnCount(4); // Индекс, X, Y, Error
-        
-        QStringList headers;
-        headers << "Индекс" << "X" << "Y" << "Ошибка";
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        int rowIdx = 0;
-        for (size_t i = 0; i < m_error.size(); i += skipFactor) {
-            if (i < m_x_coords.size() && i < m_y_coords.size()) {
-                dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(i))); // Индекс узла
-                dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(m_x_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 2, new QTableWidgetItem(QString::number(m_y_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 3, new QTableWidgetItem(QString::number(m_error[i], 'g', 9)));
-                rowIdx++;
+            
+            if (found) {
+                // Создаем текст с значением и индексом узла
+                QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
+                QTableWidgetItem* item = new QTableWidgetItem(cellText);
+                
+                // Сохраняем также индекс узла в данных элемента для возможного доступа
+                item->setData(Qt::UserRole, nodeIndex);
+                
+                dataTable->setItem(rowIdx, colIdx + 2, item);
+            } else {
+                // Для узлов вне области используем "---" вместо "NaN"
+                dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("---"));
             }
         }
     }
@@ -601,7 +573,7 @@ void TableTabWidget::populateTableWithRefinedGridData()
     
     int skipFactor = skipFactorSpinBox->value();
     
-    // Для решения на уточненной сетке всегда используем подход с квадратной сетки
+    // Для решения на уточненной сетке используем табличное представление для любого типа области
     
     // Получаем уникальные координаты X и Y
     std::set<double> uniqueX, uniqueY;
@@ -614,24 +586,31 @@ void TableTabWidget::populateTableWithRefinedGridData()
     std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
     std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
     
-    // Создаем прореженные координаты
-    std::vector<double> xCoordsSkipped, yCoordsSkipped;
+    // Создаем прореженные координаты с сохранением оригинальных индексов
+    std::vector<double> xCoordsSkipped;
+    std::vector<int> xIndicesSkipped;  // Сохраняем оригинальные индексы
     for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
         xCoordsSkipped.push_back(xCoords[i]);
+        xIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
     }
+    
+    std::vector<double> yCoordsSkipped;
+    std::vector<int> yIndicesSkipped;  // Сохраняем оригинальные индексы
     for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
         yCoordsSkipped.push_back(yCoords[i]);
+        yIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
     }
     
     // Устанавливаем размеры таблицы
     dataTable->setRowCount(yCoordsSkipped.size());
     dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индекса
     
-    // Устанавливаем заголовки столбцов
+    // Устанавливаем заголовки столбцов с индексами для X
     QStringList headers;
     headers << "Индекс" << "Y/X";
-    for (const auto& x : xCoordsSkipped) {
-        headers << QString::number(x, 'g', 6);
+    for (size_t i = 0; i < xCoordsSkipped.size(); i++) {
+        // Используем оригинальный индекс вместо i
+        headers << QString("%1\n(%2)").arg(xCoordsSkipped[i], 0, 'g', 6).arg(xIndicesSkipped[i]);
     }
     dataTable->setHorizontalHeaderLabels(headers);
     
@@ -639,8 +618,8 @@ void TableTabWidget::populateTableWithRefinedGridData()
     for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
         double y = yCoordsSkipped[rowIdx];
         
-        // Добавляем индекс строки
-        dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(rowIdx)));
+        // Добавляем оригинальный индекс строки вместо rowIdx
+        dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(yIndicesSkipped[rowIdx])));
         
         // Устанавливаем метку Y во второй столбец
         dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
@@ -675,7 +654,8 @@ void TableTabWidget::populateTableWithRefinedGridData()
                 
                 dataTable->setItem(rowIdx, colIdx + 2, item);
             } else {
-                dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("NaN"));
+                // Для узлов вне области используем "---" вместо "NaN"
+                dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("---"));
             }
         }
     }
@@ -700,104 +680,88 @@ void TableTabWidget::populateTableWithSolutionRefinedDiff()
     
     int skipFactor = skipFactorSpinBox->value();
     
-    if (m_is_square_grid) {
-        // Для квадратной сетки организуем данные в виде таблицы X на Y
+    // Для всех типов сеток (квадратных и Г-образных) используем табличное представление
+    
+    // Получаем уникальные координаты X и Y
+    std::set<double> uniqueX, uniqueY;
+    for (size_t i = 0; i < m_x_coords.size(); i++) {
+        uniqueX.insert(m_x_coords[i]);
+        uniqueY.insert(m_y_coords[i]);
+    }
+    
+    // Преобразуем в векторы для удобства индексации с прореживанием
+    std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
+    std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+    
+    // Создаем прореженные координаты с сохранением оригинальных индексов
+    std::vector<double> xCoordsSkipped;
+    std::vector<int> xIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
+        xCoordsSkipped.push_back(xCoords[i]);
+        xIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    std::vector<double> yCoordsSkipped;
+    std::vector<int> yIndicesSkipped;  // Сохраняем оригинальные индексы
+    for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
+        yCoordsSkipped.push_back(yCoords[i]);
+        yIndicesSkipped.push_back(i);  // Сохраняем оригинальный индекс
+    }
+    
+    // Устанавливаем размеры таблицы
+    dataTable->setRowCount(yCoordsSkipped.size());
+    dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
+    
+    // Устанавливаем заголовки столбцов с индексами для X
+    QStringList headers;
+    headers << "Индекс" << "Y/X";
+    for (size_t i = 0; i < xCoordsSkipped.size(); i++) {
+        headers << QString("%1\n(%2)").arg(xCoordsSkipped[i], 0, 'g', 6).arg(i); // Добавляем индекс X
+    }
+    dataTable->setHorizontalHeaderLabels(headers);
+    
+    // Заполняем данные
+    for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
+        double y = yCoordsSkipped[rowIdx];
         
-        // Получаем уникальные координаты X и Y
-        std::set<double> uniqueX, uniqueY;
-        for (size_t i = 0; i < m_x_coords.size(); i++) {
-            uniqueX.insert(m_x_coords[i]);
-            uniqueY.insert(m_y_coords[i]);
-        }
+        // Добавляем индекс строки
+        dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(rowIdx)));
         
-        // Преобразуем в векторы для удобства индексации с прореживанием
-        std::vector<double> xCoords(uniqueX.begin(), uniqueX.end());
-        std::vector<double> yCoords(uniqueY.begin(), uniqueY.end());
+        // Устанавливаем метку Y в первый столбец
+        dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
         
-        // Создаем прореженные координаты
-        std::vector<double> xCoordsSkipped, yCoordsSkipped;
-        for (size_t i = 0; i < xCoords.size(); i += skipFactor) {
-            xCoordsSkipped.push_back(xCoords[i]);
-        }
-        for (size_t i = 0; i < yCoords.size(); i += skipFactor) {
-            yCoordsSkipped.push_back(yCoords[i]);
-        }
-        
-        // Устанавливаем размеры таблицы
-        dataTable->setRowCount(yCoordsSkipped.size());
-        dataTable->setColumnCount(xCoordsSkipped.size() + 2);  // +2 для столбца координат Y и индексов
-        
-        // Устанавливаем заголовки столбцов
-        QStringList headers;
-        headers << "Индекс" << "Y/X";
-        for (const auto& x : xCoordsSkipped) {
-            headers << QString::number(x, 'g', 6);
-        }
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        // Заполняем данные
-        for (size_t rowIdx = 0; rowIdx < yCoordsSkipped.size(); rowIdx++) {
-            double y = yCoordsSkipped[rowIdx];
+        // Заполняем значения в строке
+        for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
+            double x = xCoordsSkipped[colIdx];
             
-            // Добавляем индекс строки
-            dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(rowIdx)));
+            // Ищем индекс точки с координатами (x, y)
+            bool found = false;
+            double value = 0.0;
+            int nodeIndex = -1;
             
-            // Устанавливаем метку Y в первый столбец
-            dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(y, 'g', 6)));
-            
-            // Заполняем значения в строке
-            for (size_t colIdx = 0; colIdx < xCoordsSkipped.size(); colIdx++) {
-                double x = xCoordsSkipped[colIdx];
-                
-                // Ищем индекс точки с координатами (x, y)
-                bool found = false;
-                double value = 0.0;
-                int nodeIndex = -1;
-                
-                for (size_t i = 0; i < m_x_coords.size(); i++) {
-                    if (std::abs(m_x_coords[i] - x) < 1e-9 && std::abs(m_y_coords[i] - y) < 1e-9) {
-                        if (i < m_solution_refined_diff.size()) {
-                            value = m_solution_refined_diff[i];
-                            found = true;
-                            nodeIndex = i; // Сохраняем индекс узла в исходной сетке
-                            break;
-                        }
+            for (size_t i = 0; i < m_refined_x_coords.size(); i++) {
+                if (std::abs(m_refined_x_coords[i] - x) < 1e-9 && std::abs(m_refined_y_coords[i] - y) < 1e-9) {
+                    if (i < m_refined_solution.size()) {
+                        value = m_refined_solution[i];
+                        found = true;
+                        nodeIndex = i; // Сохраняем индекс узла в исходной сетке
+                        break;
                     }
                 }
-                
-                if (found) {
-                    // Создаем текст с значением и индексом узла
-                    QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
-                    QTableWidgetItem* item = new QTableWidgetItem(cellText);
-                    
-                    // Сохраняем также индекс узла в данных элемента для возможного доступа
-                    item->setData(Qt::UserRole, nodeIndex);
-                    
-                    dataTable->setItem(rowIdx, colIdx + 2, item);
-                } else {
-                    dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("NaN"));
-                }
             }
-        }
-    } else {
-        // Для произвольной сетки просто выводим список точек
-        int numRows = m_solution_refined_diff.size() / skipFactor + 
-                      (m_solution_refined_diff.size() % skipFactor > 0 ? 1 : 0);
-        dataTable->setRowCount(numRows);
-        dataTable->setColumnCount(4); // Индекс, X, Y, Diff
-        
-        QStringList headers;
-        headers << "Индекс" << "X" << "Y" << "Разница решений";
-        dataTable->setHorizontalHeaderLabels(headers);
-        
-        int rowIdx = 0;
-        for (size_t i = 0; i < m_solution_refined_diff.size(); i += skipFactor) {
-            if (i < m_x_coords.size() && i < m_y_coords.size()) {
-                dataTable->setItem(rowIdx, 0, new QTableWidgetItem(QString::number(i))); // Индекс узла
-                dataTable->setItem(rowIdx, 1, new QTableWidgetItem(QString::number(m_x_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 2, new QTableWidgetItem(QString::number(m_y_coords[i], 'g', 6)));
-                dataTable->setItem(rowIdx, 3, new QTableWidgetItem(QString::number(m_solution_refined_diff[i], 'g', 9)));
-                rowIdx++;
+            
+            if (found) {
+                // Создаем текст с значением и индексом узла
+                QString cellText = QString("%1\n(Узел %2)").arg(value, 0, 'g', 9).arg(nodeIndex);
+                QTableWidgetItem* item = new QTableWidgetItem(cellText);
+                
+                // Сохраняем также индекс узла в данных элемента для возможного доступа
+                item->setData(Qt::UserRole, nodeIndex);
+                
+                dataTable->setItem(rowIdx, colIdx + 2, item);
+            } else {
+                // Для узлов вне области используем "---" вместо "NaN"
+                dataTable->setItem(rowIdx, colIdx + 2, new QTableWidgetItem("---"));
             }
         }
     }
